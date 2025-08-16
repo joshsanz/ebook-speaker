@@ -45,9 +45,51 @@ class EpubReader {
         const toc = this.epub.toc;
 
         if (toc && toc.length > 0) {
+            // Use TOC but validate that chapters exist in spine
             toc.forEach((chapter, index) => {
+                // Try to find the corresponding spine item
+                let spineId = chapter.id;
+                let foundSpineItem = null;
+
+                // First, try direct ID match
+                foundSpineItem = this.epub.spine.contents.find(item => item.id === chapter.id);
+
+                // If not found, try to find by href
+                if (!foundSpineItem) {
+                    foundSpineItem = this.epub.spine.contents.find(item => {
+                        const manifestItem = this.epub.manifest[item.id];
+                        return manifestItem && (
+                            manifestItem.href === chapter.href ||
+                            manifestItem.href === chapter.href.replace(/^.*\//, '') // Try without path
+                        );
+                    });
+                }
+
+                // If still not found, try to find by partial href match
+                if (!foundSpineItem && chapter.href) {
+                    const chapterFile = chapter.href.split('/').pop().split('#')[0]; // Get filename without fragment
+                    foundSpineItem = this.epub.spine.contents.find(item => {
+                        const manifestItem = this.epub.manifest[item.id];
+                        if (!manifestItem) return false;
+                        const manifestFile = manifestItem.href.split('/').pop().split('#')[0];
+                        return manifestFile === chapterFile;
+                    });
+                }
+
+                if (foundSpineItem) {
+                    spineId = foundSpineItem.id;
+                } else {
+                    // If we still can't find it, skip this chapter or use a fallback
+                    console.warn(`Could not find spine item for chapter: ${chapter.title} (${chapter.href})`);
+                    // Try to use the first available spine item as fallback for now
+                    if (this.epub.spine.contents.length > index) {
+                        spineId = this.epub.spine.contents[index].id;
+                        console.warn(`Using fallback spine item: ${spineId}`);
+                    }
+                }
+
                 this.chapters.push({
-                    id: chapter.id,
+                    id: spineId,
                     title: chapter.title,
                     href: chapter.href,
                     order: index + 1
@@ -67,6 +109,7 @@ class EpubReader {
                 }
             });
         }
+
     }
 
     /**
@@ -142,13 +185,19 @@ class EpubReader {
     }
 
     /**
-     * Clean HTML content for text display
+     * Clean HTML content for text display while preserving paragraph structure
      */
     cleanHtmlContent(html) {
         if (!html) return '';
 
+        // Convert paragraph and div tags to double line breaks before removing HTML
+        let text = html.replace(/<\/p>/gi, '\n\n')
+                      .replace(/<\/div>/gi, '\n\n')
+                      .replace(/<br\s*\/?>/gi, '\n')
+                      .replace(/<\/h[1-6]>/gi, '\n\n');
+
         // Remove HTML tags
-        let text = html.replace(/<[^>]*>/g, '');
+        text = text.replace(/<[^>]*>/g, '');
 
         // Decode HTML entities
         text = text.replace(/&amp;/g, '&')
@@ -156,12 +205,37 @@ class EpubReader {
                   .replace(/&gt;/g, '>')
                   .replace(/&quot;/g, '"')
                   .replace(/&#39;/g, "'")
-                  .replace(/&nbsp;/g, ' ');
+                  .replace(/&nbsp;/g, ' ')
+                  .replace(/&#8217;/g, "'")
+                  .replace(/&#8220;/g, '"')
+                  .replace(/&#8221;/g, '"')
+                  .replace(/&#8211;/g, '–')
+                  .replace(/&#8212;/g, '—');
 
-        // Clean up whitespace
-        text = text.replace(/\s+/g, ' ').trim();
+        // Clean up excessive whitespace while preserving paragraph breaks
+        text = text.replace(/[ \t]+/g, ' ')  // Replace multiple spaces/tabs with single space
+                  .replace(/\n[ \t]+/g, '\n')  // Remove spaces at start of lines
+                  .replace(/[ \t]+\n/g, '\n')  // Remove spaces at end of lines
+                  .replace(/\n{3,}/g, '\n\n')  // Replace 3+ newlines with 2
+                  .trim();
 
         return text;
+    }
+    /**
+     * Get raw HTML content for web display (preserves formatting)
+     */
+    getRawHtmlContent(html) {
+        if (!html) return '';
+
+        // Clean up the HTML but preserve structure for web display
+        let cleanHtml = html.replace(/&nbsp;/g, ' ')
+                           .replace(/&#8217;/g, "'")
+                           .replace(/&#8220;/g, '"')
+                           .replace(/&#8221;/g, '"')
+                           .replace(/&#8211;/g, '–')
+                           .replace(/&#8212;/g, '—');
+
+        return cleanHtml;
     }
 
     /**
