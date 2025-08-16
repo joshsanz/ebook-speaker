@@ -1,0 +1,19 @@
+{
+  "name": "ebook-speaker",
+  "version": "1.0.0",
+  "description": "A web server to read ebooks aloud with better text-to-speech than apple's default page reader",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "epub2": "^3.0.2",
+    "path": "^0.12.7",
+    "fs": "^0.0.1-security"
+  },
+  "keywords": ["ebook", "epub", "text-to-speech", "reader"],
+  "author": "",
+  "license": "ISC"
+}
