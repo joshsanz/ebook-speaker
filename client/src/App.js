@@ -15,6 +15,7 @@ function App() {
           <Routes>
             <Route path="/" element={<BookList />} />
             <Route path="/book/:filename" element={<BookReader />} />
+            <Route path="/book/:filename/chapter/:chapterId" element={<BookReader />} />
           </Routes>
         </main>
       </div>

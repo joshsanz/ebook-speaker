@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
+const fetch = require('node-fetch');
 const EpubReader = require('./epub-reader');
 
 const app = express();
@@ -105,6 +106,55 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
     } catch (error) {
         res.status(404).json({
             error: 'Chapter not found or could not be read',
+            message: error.message
+        });
+    }
+});
+
+// Proxy endpoint for TTS requests
+app.post('/api/tts/speech', async (req, res) => {
+    try {
+        const { model, input, voice, response_format, speed } = req.body;
+
+        // Validate required fields
+        if (!input || !voice) {
+            return res.status(400).json({
+                error: 'Missing required fields: input and voice are required'
+            });
+        }
+
+        // Forward request to TTS server
+        const ttsResponse = await fetch('http://localhost:5005/v1/audio/speech', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: model || 'orpheus',
+                input,
+                voice,
+                response_format: response_format || 'wav',
+                speed: speed || 1.0
+            })
+        });
+
+        if (!ttsResponse.ok) {
+            throw new Error(`TTS server error: ${ttsResponse.status} - ${ttsResponse.statusText}`);
+        }
+
+        // Set appropriate headers
+        res.set({
+            'Content-Type': 'audio/wav',
+            'Content-Disposition': 'attachment; filename="speech.wav"'
+        });
+
+        // Stream the audio response
+        ttsResponse.body.pipe(res);
+
+    } catch (error) {
+        console.error('TTS proxy error:', error);
+        res.status(500).json({
+            error: 'TTS service unavailable',
             message: error.message
         });
     }

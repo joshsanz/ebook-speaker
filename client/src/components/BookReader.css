@@ -145,7 +145,57 @@
 
 .reader-controls {
   display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.voice-selection {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+}
+
+.voice-selection label {
+  font-weight: 500;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.voice-dropdown {
+  padding: 0.4rem 0.8rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  background-color: white;
+  color: #333;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.3s ease;
+}
+
+.voice-dropdown:hover {
+  border-color: #2196f3;
+}
+
+.voice-dropdown:focus {
+  outline: none;
+  border-color: #2196f3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+}
+
+.voice-dropdown:disabled {
+  background-color: #f5f5f5;
+  color: #999;
+  cursor: not-allowed;
+}
+
+.audio-progress {
+  font-size: 0.85rem;
+  color: #666;
+  background-color: #f0f0f0;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .speak-button,
@@ -157,6 +207,7 @@
   font-weight: 500;
   transition: all 0.3s ease;
   font-size: 0.9rem;
+  min-width: 100px;
 }
 
 .speak-button {
@@ -164,7 +215,7 @@
   color: white;
 }
 
-.speak-button:hover {
+.speak-button:hover:not(:disabled) {
   background-color: #45a049;
 }
 
@@ -172,8 +223,23 @@
   background-color: #ff9800;
 }
 
-.speak-button.speaking:hover {
+.speak-button.speaking:hover:not(:disabled) {
   background-color: #f57c00;
+}
+
+.speak-button.loading {
+  background-color: #2196f3;
+  cursor: wait;
+}
+
+.speak-button.loading:hover {
+  background-color: #1976d2;
+}
+
+.speak-button:disabled {
+  background-color: #cccccc;
+  color: #666;
+  cursor: not-allowed;
 }
 
 .stop-button {
@@ -183,6 +249,79 @@
 
 .stop-button:hover {
   background-color: #d32f2f;
+}
+
+/* Chapter Navigation */
+.chapter-navigation-top,
+.chapter-navigation-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin: 2rem 0;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.chapter-navigation-top {
+  margin-bottom: 2rem;
+}
+
+.chapter-navigation-bottom {
+  margin-top: 2rem;
+}
+
+.nav-button {
+  padding: 0.75rem 1.5rem;
+  border: 2px solid #2196f3;
+  background-color: white;
+  color: #2196f3;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  min-width: 120px;
+  text-align: center;
+}
+
+.nav-button:hover:not(:disabled) {
+  background-color: #2196f3;
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+}
+
+.nav-button:disabled {
+  background-color: #f5f5f5;
+  color: #ccc;
+  border-color: #e0e0e0;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.toc-button {
+  background-color: #4caf50;
+  border-color: #4caf50;
+  color: white;
+  flex: 1;
+  max-width: 200px;
+}
+
+.toc-button:hover {
+  background-color: #45a049;
+  border-color: #45a049;
+}
+
+.prev-button {
+  justify-self: flex-start;
+}
+
+.next-button {
+  justify-self: flex-end;
 }
 
 /* Chapter Content */
@@ -258,6 +397,18 @@
 
   .reader-controls {
     justify-content: center;
+    gap: 0.75rem;
+  }
+
+  .voice-selection {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+  }
+
+  .voice-dropdown {
+    width: 100%;
+    min-width: 120px;
   }
 
   .chapter-item {
@@ -272,15 +423,51 @@
   .chapter-content p {
     text-align: left;
   }
+
+  .chapter-navigation-top,
+  .chapter-navigation-bottom {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .nav-button {
+    min-width: 100px;
+    padding: 0.6rem 1rem;
+  }
+
+  .toc-button {
+    order: -1;
+    max-width: none;
+  }
 }
 
 @media (max-width: 480px) {
   .reader-controls {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .voice-selection {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .voice-selection label {
+    flex-shrink: 0;
+  }
+
+  .voice-dropdown {
+    flex: 1;
+    min-width: 0;
   }
 
   .speak-button,
   .stop-button {
     width: 100%;
+  }
+
+  .audio-progress {
+    text-align: center;
   }
 }
