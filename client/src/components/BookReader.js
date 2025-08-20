@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useTTS } from '../hooks/useTTS';
+import { useCleanup } from '../hooks/useCleanup';
 import './BookReader.css';
 
 const BookReader = () => {
@@ -13,13 +15,21 @@ const BookReader = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isReading, setIsReading] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('mia');
-  const [audioQueue, setAudioQueue] = useState([]);
-  const [currentAudioIndex, setCurrentAudioIndex] = useState(0);
-  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-  const audioRef = useRef(null);
-  const abortControllerRef = useRef(null);
+
+  // Use custom hooks for TTS and cleanup
+  const {
+    isSpeaking,
+    isLoadingAudio,
+    audioQueue,
+    currentAudioIndex,
+    audioRef,
+    speakText,
+    stopSpeaking,
+    handleAudioEnded
+  } = useTTS();
+  
+  const { addCleanup, executeCleanup } = useCleanup();
 
   const fetchBookData = useCallback(async () => {
     try {
@@ -48,25 +58,6 @@ const BookReader = () => {
     }
   }, [filename]);
 
-  const stopSpeaking = useCallback(() => {
-    // Abort any ongoing requests
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-
-    // Stop current audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-
-    // Clean up audio queue
-    audioQueue.forEach(url => URL.revokeObjectURL(url));
-    setAudioQueue([]);
-    setCurrentAudioIndex(0);
-    setIsSpeaking(false);
-    setIsLoadingAudio(false);
-  }, [audioQueue]);
 
   const fetchChapterContent = useCallback(async (chapterId) => {
     try {
@@ -87,229 +78,22 @@ const BookReader = () => {
     }
   }, [filename, chapters]);
 
-  // Split text into sentences for faster streaming
-  const splitIntoSentences = (text) => {
-    // Split by sentence-ending punctuation followed by whitespace and capital letter
-    const sentences = text
-      .split(/(?<=[.!?])\s+(?=[A-Z])/)
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
-
-    // Process sentences to ensure reasonable length (split only very long ones)
-    const processedSentences = [];
-    sentences.forEach((sentence) => {
-      // Only split extremely long sentences (over 400 characters) at natural breaks
-      if (sentence.length > 400) {
-        // Split at semicolons or em-dashes first
-        const majorBreaks = sentence.split(/[;—]\s+/);
-        majorBreaks.forEach((part, index) => {
-          if (index < majorBreaks.length - 1) {
-            part += ';'; // Add back the semicolon
-          }
-
-          if (part.length > 300) {
-            // Only then split at commas if still too long
-            const commaBreaks = part.split(/,\s+/);
-            let currentChunk = '';
-
-            commaBreaks.forEach((chunk, chunkIndex) => {
-              const separator = chunkIndex < commaBreaks.length - 1 ? ', ' : '';
-              if (currentChunk.length + chunk.length + separator.length <= 300) {
-                currentChunk += chunk + separator;
-              } else {
-                if (currentChunk) {
-                  processedSentences.push(currentChunk.trim());
-                }
-                currentChunk = chunk + separator;
-              }
-            });
-
-            if (currentChunk) {
-              processedSentences.push(currentChunk.trim());
-            }
-          } else {
-            processedSentences.push(part.trim());
-          }
-        });
-      } else {
-        processedSentences.push(sentence);
-      }
-    });
-
-    return processedSentences.filter(s => s.length > 0);
-  };
-
-  // Generate audio for a single sentence
-  const generateAudioForSentence = async (text, voice) => {
-    try {
-      const response = await fetch('/api/tts/speech', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'orpheus',
-          input: text,
-          voice: voice,
-          response_format: 'wav',
-          speed: 1.0
-        }),
-        signal: abortControllerRef.current?.signal
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`TTS API error: ${response.status} - ${errorData.message || response.statusText}`);
-      }
-
-      const audioBlob = await response.blob();
-      return URL.createObjectURL(audioBlob);
-    } catch (error) {
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        throw new Error('Cannot connect to TTS service. Please check your connection.');
-      }
-      throw error;
-    }
-  };
-
-  // Generate audio for all sentences with streaming playback
-  const generateAudioQueue = async (text, voice) => {
-    const sentences = splitIntoSentences(text);
-    console.log(`Total sentences to process: ${sentences.length}`);
-
-    if (sentences.length === 0) {
-      console.warn('No sentences found in text content');
-      return [];
-    }
-
-    const audioUrls = [];
-    setIsLoadingAudio(true);
-
-    try {
-      // Generate first few sentences immediately to start playback quickly
-      const initialBatch = Math.min(3, sentences.length);
-
-      for (let i = 0; i < initialBatch; i++) {
-        if (abortControllerRef.current?.signal.aborted) {
-          break;
-        }
-
-        const audioUrl = await generateAudioForSentence(sentences[i], voice);
-        audioUrls.push(audioUrl);
-        console.log(`Generated audio for sentence ${i + 1}/${sentences.length}: "${sentences[i].substring(0, 50)}..."`);
-      }
-
-      // Start playback with initial batch
-      if (audioUrls.length > 0) {
-        setAudioQueue([...audioUrls]);
-        setIsLoadingAudio(false);
-
-        // Continue generating remaining sentences in background
-        if (sentences.length > initialBatch) {
-          setTimeout(async () => {
-            for (let i = initialBatch; i < sentences.length; i++) {
-              if (abortControllerRef.current?.signal.aborted) {
-                break;
-              }
-
-              try {
-                const audioUrl = await generateAudioForSentence(sentences[i], voice);
-                setAudioQueue(prev => [...prev, audioUrl]);
-                console.log(`Generated audio for sentence ${i + 1}/${sentences.length}: "${sentences[i].substring(0, 50)}..."`);
-              } catch (error) {
-                console.error(`Failed to generate audio for sentence ${i + 1}:`, error);
-                // Continue with next sentence instead of stopping
-              }
-            }
-            console.log('Finished generating all audio segments');
-          }, 100);
-        }
-
-        return audioUrls;
-      }
-
-      return [];
-    } catch (error) {
-      setIsLoadingAudio(false);
-      throw error;
-    }
-  };
 
 
-  // Handle audio ended event
-  const handleAudioEnded = () => {
-    setCurrentAudioIndex(prev => {
-      const nextIndex = prev + 1;
-      if (nextIndex < audioQueue.length) {
-        // Play next audio with proper loading
-        setTimeout(() => {
-          if (audioRef.current && audioQueue[nextIndex]) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-            audioRef.current.src = audioQueue[nextIndex];
-            audioRef.current.load();
-            audioRef.current.play().catch(error => {
-              console.error('Audio play error:', error);
-              // Try to continue with next audio
-              handleAudioEnded();
-            });
-          }
-        }, 50);
-      } else {
-        // End of queue
-        setIsSpeaking(false);
-        setAudioQueue([]);
-        // Clean up object URLs
-        audioQueue.forEach(url => URL.revokeObjectURL(url));
-      }
-      return nextIndex;
-    });
-  };
 
-  // Start speaking with TTS server
-  const speakText = async () => {
-    if (isSpeaking) {
-      stopSpeaking();
-      return;
-    }
 
+
+  // Handle speak button click
+  const handleSpeakClick = async () => {
     if (!chapterTextContent.trim()) {
       alert('No text content available for speech');
       return;
     }
 
     try {
-      // Create abort controller for cancellation
-      abortControllerRef.current = new AbortController();
-
-      setIsSpeaking(true);
-      setCurrentAudioIndex(0);
-
-      // Generate audio queue
-      const audioUrls = await generateAudioQueue(chapterTextContent, selectedVoice);
-
-      if (audioUrls.length > 0 && !abortControllerRef.current.signal.aborted) {
-        // Start playing first audio
-        setTimeout(() => {
-          if (audioRef.current && audioUrls[0]) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-            audioRef.current.src = audioUrls[0];
-            audioRef.current.load();
-            audioRef.current.play().catch(error => {
-              console.error('Initial audio play error:', error);
-              setIsSpeaking(false);
-              setIsLoadingAudio(false);
-            });
-          }
-        }, 100);
-      } else {
-        setIsSpeaking(false);
-      }
+      await speakText(chapterTextContent, selectedVoice);
     } catch (error) {
       console.error('TTS Error:', error);
-      setIsSpeaking(false);
-      setIsLoadingAudio(false);
 
       if (error.name === 'AbortError') {
         alert('Speech generation was cancelled');
@@ -322,37 +106,61 @@ const BookReader = () => {
   };
 
 
-  const goBackToTOC = () => {
+  const goBackToTOC = useCallback(() => {
+    // Stop speaking first, then execute other cleanup
     stopSpeaking();
+    executeCleanup();
+    
     // Reset reading state when going back to TOC
     setIsReading(false);
     setCurrentChapter(null);
     setChapterContent('');
     setChapterTextContent('');
+    
     // Force navigation by using replace to ensure clean state
     navigate(`/book/${encodeURIComponent(filename)}`, { replace: true });
-  };
+  }, [stopSpeaking, executeCleanup, navigate, filename]);
 
-  const getCurrentChapterIndex = () => {
+  const getCurrentChapterIndex = useCallback(() => {
     if (!currentChapter) return -1;
     return chapters.findIndex(ch => ch.id === currentChapter.id);
-  };
+  }, [currentChapter, chapters]);
 
-  const goToPreviousChapter = () => {
+  const goToPreviousChapter = useCallback(() => {
     const currentIndex = getCurrentChapterIndex();
     if (currentIndex > 0) {
       stopSpeaking();
+      executeCleanup();
       navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapters[currentIndex - 1].id}`);
     }
-  };
+  }, [getCurrentChapterIndex, stopSpeaking, executeCleanup, navigate, filename, chapters]);
 
-  const goToNextChapter = () => {
+  const goToNextChapter = useCallback(() => {
     const currentIndex = getCurrentChapterIndex();
     if (currentIndex < chapters.length - 1) {
       stopSpeaking();
+      executeCleanup();
       navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapters[currentIndex + 1].id}`);
     }
-  };
+  }, [getCurrentChapterIndex, stopSpeaking, executeCleanup, navigate, filename, chapters]);
+
+  // Reset state when navigating between routes
+  useEffect(() => {
+    // Stop any current speech when navigating
+    stopSpeaking();
+    executeCleanup();
+    
+    // Reset chapter-specific state when going back to TOC
+    if (!chapterId) {
+      setIsReading(false);
+      setCurrentChapter(null);
+      setChapterContent('');
+      setChapterTextContent('');
+    }
+    
+    // Reset error state on navigation
+    setError(null);
+  }, [filename, chapterId, stopSpeaking, executeCleanup]);
 
   // Fetch book data on mount
   useEffect(() => {
@@ -366,29 +174,24 @@ const BookReader = () => {
     }
   }, [chapterId, chapters, fetchChapterContent]);
 
-  // Cleanup on unmount
+  // Add TTS cleanup to cleanup manager
   useEffect(() => {
-    const currentAudio = audioRef.current;
-    const currentAbortController = abortControllerRef.current;
+    addCleanup(() => {
+      stopSpeaking();
+    });
+  }, [addCleanup, stopSpeaking]);
 
+  // Cleanup on route change (when chapterId changes)
+  useEffect(() => {
     return () => {
-      // Abort any ongoing requests
-      if (currentAbortController) {
-        currentAbortController.abort();
-      }
-
-      // Stop current audio
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-      }
-
-      // Clean up audio queue
-      audioQueue.forEach(url => URL.revokeObjectURL(url));
+      executeCleanup();
     };
-  }, [audioQueue]);
+  }, [chapterId, executeCleanup]);
+
+  console.log('BookReader render - loading:', loading, 'error:', error, 'isReading:', isReading, 'currentChapter:', currentChapter, 'chapterId:', chapterId);
 
   if (loading) {
+    console.log('Rendering loading state');
     return (
       <div className="book-reader-container">
         <div className="loading">Loading...</div>
@@ -397,6 +200,7 @@ const BookReader = () => {
   }
 
   if (error) {
+    console.log('Rendering error state:', error);
     return (
       <div className="book-reader-container">
         <div className="error">Error: {error}</div>
@@ -406,6 +210,7 @@ const BookReader = () => {
   }
 
   if (isReading && currentChapter) {
+    console.log('Rendering chapter view for:', currentChapter.title);
     return (
       <div className="book-reader-container">
         <div className="reader-header">
@@ -435,7 +240,7 @@ const BookReader = () => {
             </div>
 
             <button
-              onClick={speakText}
+              onClick={handleSpeakClick}
               disabled={isLoadingAudio}
               className={`speak-button ${isSpeaking ? 'speaking' : ''} ${isLoadingAudio ? 'loading' : ''}`}
             >
@@ -510,7 +315,7 @@ const BookReader = () => {
             if (isSpeaking && currentAudioIndex + 1 < audioQueue.length) {
               handleAudioEnded();
             } else {
-              setIsSpeaking(false);
+              stopSpeaking();
             }
           }}
           onLoadStart={() => {
@@ -525,6 +330,8 @@ const BookReader = () => {
     );
   }
 
+  console.log('Rendering TOC view - chapters:', chapters.length, 'book:', book?.title);
+  
   return (
     <div className="book-reader-container">
       <div className="book-header">
@@ -547,8 +354,11 @@ const BookReader = () => {
           <div className="chapters-list">
             {chapters.map((chapter, index) => (
               <button
-                key={chapter.id}
-                onClick={() => navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapter.id}`)}
+                key={`${chapter.id}-${index}`}
+                onClick={() => {
+                  console.log('Chapter clicked:', chapter.id);
+                  navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapter.id}`);
+                }}
                 className="chapter-item"
               >
                 <span className="chapter-number">{index + 1}.</span>
