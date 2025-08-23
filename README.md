@@ -13,12 +13,14 @@ A full-stack web application that reads EPUB ebooks aloud using advanced text-to
 ## Architecture
 
 **Backend (Node.js/Express)**
+
 - REST API for EPUB file management
 - Custom EPUB parser using epub2 library
 - TTS proxy service integration
 - Static file serving for production builds
 
 **Frontend (React)**
+
 - Single-page application with React Router
 - Book library browser
 - Chapter-based reading interface
@@ -33,22 +35,26 @@ A full-stack web application that reads EPUB ebooks aloud using advanced text-to
 ## Installation
 
 1. Clone the repository:
+
 ```bash
 git clone <repository-url>
 cd ebook-speaker
 ```
 
 2. Install server dependencies:
+
 ```bash
 npm install
 ```
 
 3. Install client dependencies:
+
 ```bash
 npm run install-client
 ```
 
 4. Create a data directory for EPUB files:
+
 ```bash
 mkdir data
 ```
@@ -58,26 +64,34 @@ mkdir data
 ## Running the Application
 
 ### Development Mode (Recommended)
+
 Start both server and client with hot reload:
+
 ```bash
 npm run dev
 ```
+
 - Server runs on `http://localhost:3001`
 - Client runs on `http://localhost:3000`
 
 ### Production Mode
+
 1. Build the client:
+
 ```bash
 npm run build
 ```
 
 2. Start the server:
+
 ```bash
 npm start
 ```
+
 - Application runs on `http://localhost:3001`
 
 ### Individual Components
+
 ```bash
 # Server only
 npm start
@@ -106,10 +120,13 @@ npm run client
 ## Configuration
 
 ### TTS Service
+
 The application expects a TTS service at `http://localhost:5005/v1/audio/speech`. Configure your TTS service to match this endpoint or modify the proxy URL in `server.js:127`.
 
 ### Port Configuration
+
 Set the `PORT` environment variable to change the server port:
+
 ```bash
 PORT=8080 npm start
 ```
@@ -117,6 +134,7 @@ PORT=8080 npm start
 ## Testing
 
 Run client tests:
+
 ```bash
 cd client
 npm test
