@@ -7,6 +7,7 @@ import uvicorn
 import io
 import kokoro_onnx
 import numpy as np
+import onnxruntime as ort
 import wave
 import os
 import requests
@@ -41,15 +42,19 @@ def download_file_if_missing(url: str, filename: str) -> bool:
 def ensure_model_files():
     """Ensure all required model files are present"""
     print("🔍 Checking for required model files...")
-
+    # Use fp16 model for faster inference. Supposedly there is no perceptible difference in 
+    # generated audio.
+    # The int8 model (~80MB) may be useful for a client-side inference project
+    model_name = "kokoro-v1.0.onnx" #"kokoro-v1.0.fp16.onnx"
+    voice_name = "voices-v1.0.bin"
     files_to_download = [
         {
-            "url": "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin",
-            "filename": "voices-v1.0.bin"
+            "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{voice_name}",
+            "filename": voice_name
         },
         {
-            "url": "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx",
-            "filename": "kokoro-v1.0.onnx"
+            "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{model_name}",
+            "filename": model_name
         }
     ]
 
@@ -63,6 +68,8 @@ def ensure_model_files():
 
     print("✅ All model files are ready")
 
+    return model_name, voice_name
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -71,10 +78,26 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         # Ensure model files are present
-        ensure_model_files()
+        model, voices = ensure_model_files()
+
+        # Create ONNX session to select an accelerator (CoreML/CUDA) if available
+        providers = ort.get_available_providers()
+        if "CUDAExececutionProvider" in providers:
+            # Apply CUDA conv algo search performance tweak
+            providers = [("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT"}), "CPUExecutionProvider"]
+        elif "CoreMLExecutionProvider" in providers:
+            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        else:
+            providers = ["CPUExecutionProvider"]
+        print("Using inference engines", providers)
+
+        sess_opts = ort.SessionOptions()
+        cpu_count = os.cpu_count()
+        sess_opts.intra_op_num_threads = cpu_count
+        session = ort.InferenceSession(model, session_options=sess_opts, providers=providers)
 
         # Initialize TTS model
-        tts_model = kokoro_onnx.Kokoro("kokoro-v1.0.onnx", "voices-v1.0.bin")
+        tts_model = kokoro_onnx.Kokoro.from_session(session, voices)
         print("🎵 TTS model initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize TTS model: {e}")
@@ -117,7 +140,6 @@ class VoiceResponse(BaseModel):
     language: str
     gender: str
     description: str
-    quality: str
 
 
 class LanguageResponse(BaseModel):
@@ -163,7 +185,6 @@ def parse_voice_name(voice_name: str) -> dict:
                 "language": "en",
                 "gender": "unknown",
                 "description": voice_name,
-                "quality": "high"
             }
 
         lang_gender, name = parts
@@ -217,21 +238,18 @@ def parse_voice_name(voice_name: str) -> dict:
                 "language": language,
                 "gender": gender,
                 "description": description,
-                "quality": "high"
             }
         else:
             return {
                 "language": "en",
                 "gender": "unknown",
                 "description": voice_name,
-                "quality": "high"
             }
     except Exception:
         return {
             "language": "en",
             "gender": "unknown",
             "description": voice_name,
-            "quality": "high"
         }
 
 
