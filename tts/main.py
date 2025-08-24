@@ -45,7 +45,7 @@ def ensure_model_files():
     # Use fp16 model for faster inference. Supposedly there is no perceptible difference in 
     # generated audio.
     # The int8 model (~80MB) may be useful for a client-side inference project
-    model_name = "kokoro-v1.0.onnx" #"kokoro-v1.0.fp16.onnx"
+    model_name = "kokoro-v1.0.fp16.onnx"
     voice_name = "voices-v1.0.bin"
     files_to_download = [
         {
