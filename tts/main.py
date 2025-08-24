@@ -11,10 +11,28 @@ import onnxruntime as ort
 import wave
 import os
 import requests
+import signal
+import sys
+import asyncio
+from threading import Event
 
 
 # Initialize Kokoro TTS
 tts_model = None
+shutdown_event = Event()
+
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    print(f"🔴 Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
+
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown"""
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    print("📡 Signal handlers registered (SIGTERM, SIGINT)")
 
 
 def download_file_if_missing(url: str, filename: str) -> bool:
@@ -76,6 +94,9 @@ async def lifespan(app: FastAPI):
     """Handle application lifespan events"""
     global tts_model
     # Startup
+    print("🚀 Starting TTS service...")
+    setup_signal_handlers()
+    
     try:
         # Ensure model files are present
         model, voices = ensure_model_files()
@@ -333,6 +354,13 @@ async def get_languages():
 @app.post("/v1/audio/speech")
 async def text_to_speech(request: SpeechRequest):
     """Convert text to speech"""
+    
+    # Check if shutdown has been requested
+    if shutdown_event.is_set():
+        raise HTTPException(
+            status_code=503,
+            detail="Service is shutting down, not accepting new requests"
+        )
 
     # Validate model
     if request.model != "kokoro":
@@ -361,6 +389,13 @@ async def text_to_speech(request: SpeechRequest):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid voice '{request.voice}'. Available voices: {available_voices}"
+            )
+
+        # Check again before starting generation (in case shutdown was requested)
+        if shutdown_event.is_set():
+            raise HTTPException(
+                status_code=503,
+                detail="Service is shutting down, not accepting new requests"
             )
 
         # Generate speech

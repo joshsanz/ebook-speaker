@@ -31,12 +31,13 @@ WORKDIR /app
 # Copy installed dependencies from builder stage
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application code
-COPY main.py ./
+# Copy application code and entrypoint
+COPY main.py entrypoint.sh ./
 
 # Set proper ownership and permissions
 RUN chown -R appuser:appuser /app && \
-    chmod +x /app/main.py
+    chmod +x /app/main.py && \
+    chmod +x /app/entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -53,5 +54,8 @@ EXPOSE 5005
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5005/health || exit 1
 
-# Start the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5005", "--workers", "1"]
+# Add shutdown handling 
+STOPSIGNAL SIGTERM
+
+# Start the application with the entrypoint script
+CMD ["./entrypoint.sh"]

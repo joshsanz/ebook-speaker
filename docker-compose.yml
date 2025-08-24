@@ -24,6 +24,9 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    # Add graceful shutdown configuration
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
 
   client-build:
     image: node:20-slim
@@ -52,6 +55,9 @@ services:
     restart: unless-stopped
     networks:
       - ebook-speaker
+    # Add graceful shutdown configuration
+    stop_signal: SIGTERM
+    stop_grace_period: 45s
     deploy:
       resources:
         limits:
