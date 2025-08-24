@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import { useCleanup } from '../hooks/useCleanup';
+import { useVoices } from '../hooks/useVoices';
+import VoiceSelector from './VoiceSelector';
 import './BookReader.css';
 
 const BookReader = () => {
@@ -15,21 +17,35 @@ const BookReader = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isReading, setIsReading] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState('mia');
+  const [selectedVoice, setSelectedVoice] = useState('af_heart');
 
   // Use custom hooks for TTS and cleanup
   const {
     isSpeaking,
+    isPaused,
     isLoadingAudio,
-    audioQueue,
+    totalAudioCount,
     currentAudioIndex,
     audioRef,
     speakText,
+    pauseSpeaking,
+    resumeSpeaking,
+    fastForward,
+    rewind,
     stopSpeaking,
     handleAudioEnded
   } = useTTS();
-  
+
   const { addCleanup, executeCleanup } = useCleanup();
+
+  // Use voices hook
+  const {
+    voices,
+    groupedVoices,
+    loading: voicesLoading,
+    error: voicesError,
+    getDefaultVoice
+  } = useVoices();
 
   const fetchBookData = useCallback(async () => {
     try {
@@ -83,8 +99,19 @@ const BookReader = () => {
 
 
 
-  // Handle speak button click
+  // Handle speak/pause button click
   const handleSpeakClick = async () => {
+    // If currently speaking, toggle pause/resume
+    if (isSpeaking) {
+      if (isPaused) {
+        resumeSpeaking();
+      } else {
+        pauseSpeaking();
+      }
+      return;
+    }
+
+    // If not speaking, start speaking
     if (!chapterTextContent.trim()) {
       alert('No text content available for speech');
       return;
@@ -110,20 +137,37 @@ const BookReader = () => {
     // Stop speaking first, then execute other cleanup
     stopSpeaking();
     executeCleanup();
-    
+
     // Reset reading state when going back to TOC
     setIsReading(false);
     setCurrentChapter(null);
     setChapterContent('');
     setChapterTextContent('');
-    
+
     // Force navigation by using replace to ensure clean state
     navigate(`/book/${encodeURIComponent(filename)}`, { replace: true });
-  }, [stopSpeaking, executeCleanup, navigate, filename]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate, filename]);
 
   const getCurrentChapterIndex = useCallback(() => {
-    if (!currentChapter) return -1;
-    return chapters.findIndex(ch => ch.id === currentChapter.id);
+    if (!currentChapter || !chapters.length) return -1;
+
+    // First try to find by exact ID match
+    let index = chapters.findIndex(ch => ch.id === currentChapter.id);
+
+    // If not found, try to find by order number as fallback
+    if (index === -1) {
+      console.warn(`Chapter ID ${currentChapter.id} not found in chapters list, trying order fallback`);
+      index = chapters.findIndex(ch => ch.order === currentChapter.order);
+    }
+
+    // If still not found, log warning and return -1
+    if (index === -1) {
+      console.error(`Could not find current chapter ${currentChapter.title} (ID: ${currentChapter.id}) in chapters list`);
+      console.log('Available chapters:', chapters.map(ch => `${ch.order}: ${ch.title} (ID: ${ch.id})`));
+    }
+
+    return index;
   }, [currentChapter, chapters]);
 
   const goToPreviousChapter = useCallback(() => {
@@ -133,7 +177,8 @@ const BookReader = () => {
       executeCleanup();
       navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapters[currentIndex - 1].id}`);
     }
-  }, [getCurrentChapterIndex, stopSpeaking, executeCleanup, navigate, filename, chapters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getCurrentChapterIndex, navigate, filename, chapters]);
 
   const goToNextChapter = useCallback(() => {
     const currentIndex = getCurrentChapterIndex();
@@ -142,14 +187,15 @@ const BookReader = () => {
       executeCleanup();
       navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapters[currentIndex + 1].id}`);
     }
-  }, [getCurrentChapterIndex, stopSpeaking, executeCleanup, navigate, filename, chapters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getCurrentChapterIndex, navigate, filename, chapters]);
 
   // Reset state when navigating between routes
   useEffect(() => {
     // Stop any current speech when navigating
     stopSpeaking();
     executeCleanup();
-    
+
     // Reset chapter-specific state when going back to TOC
     if (!chapterId) {
       setIsReading(false);
@@ -157,10 +203,11 @@ const BookReader = () => {
       setChapterContent('');
       setChapterTextContent('');
     }
-    
+
     // Reset error state on navigation
     setError(null);
-  }, [filename, chapterId, stopSpeaking, executeCleanup]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filename, chapterId]);
 
   // Fetch book data on mount
   useEffect(() => {
@@ -173,6 +220,16 @@ const BookReader = () => {
       fetchChapterContent(chapterId);
     }
   }, [chapterId, chapters, fetchChapterContent]);
+
+  // Set default voice when voices are loaded
+  useEffect(() => {
+    if (voices.length > 0 && selectedVoice === 'af_heart') {
+      const defaultVoice = getDefaultVoice();
+      if (defaultVoice && defaultVoice !== selectedVoice) {
+        setSelectedVoice(defaultVoice);
+      }
+    }
+  }, [voices, getDefaultVoice, selectedVoice]);
 
   // Add TTS cleanup to cleanup manager
   useEffect(() => {
@@ -188,10 +245,8 @@ const BookReader = () => {
     };
   }, [chapterId, executeCleanup]);
 
-  console.log('BookReader render - loading:', loading, 'error:', error, 'isReading:', isReading, 'currentChapter:', currentChapter, 'chapterId:', chapterId);
 
   if (loading) {
-    console.log('Rendering loading state');
     return (
       <div className="book-reader-container">
         <div className="loading">Loading...</div>
@@ -200,7 +255,6 @@ const BookReader = () => {
   }
 
   if (error) {
-    console.log('Rendering error state:', error);
     return (
       <div className="book-reader-container">
         <div className="error">Error: {error}</div>
@@ -210,7 +264,6 @@ const BookReader = () => {
   }
 
   if (isReading && currentChapter) {
-    console.log('Rendering chapter view for:', currentChapter.title);
     return (
       <div className="book-reader-container">
         <div className="reader-header">
@@ -219,33 +272,47 @@ const BookReader = () => {
           </button>
           <h2>{currentChapter.title}</h2>
           <div className="reader-controls">
-            <div className="voice-selection">
-              <label htmlFor="voice-select">Voice:</label>
-              <select
-                id="voice-select"
-                value={selectedVoice}
-                onChange={(e) => setSelectedVoice(e.target.value)}
-                disabled={isSpeaking || isLoadingAudio}
-                className="voice-dropdown"
+            <VoiceSelector
+              voices={voices}
+              groupedVoices={groupedVoices}
+              selectedVoice={selectedVoice}
+              onVoiceChange={setSelectedVoice}
+              disabled={isSpeaking || isLoadingAudio}
+              loading={voicesLoading}
+              error={voicesError}
+            />
+
+            {isSpeaking && (
+              <button
+                onClick={rewind}
+                disabled={currentAudioIndex === 0}
+                className="control-button rewind-button"
+                title="Previous sentence"
               >
-                <option value="tara">Tara</option>
-                <option value="leah">Leah</option>
-                <option value="jess">Jess</option>
-                <option value="leo">Leo</option>
-                <option value="dan">Dan</option>
-                <option value="mia">Mia</option>
-                <option value="zac">Zac</option>
-                <option value="zoe">Zoe</option>
-              </select>
-            </div>
+                ⏮️
+              </button>
+            )}
 
             <button
               onClick={handleSpeakClick}
               disabled={isLoadingAudio}
-              className={`speak-button ${isSpeaking ? 'speaking' : ''} ${isLoadingAudio ? 'loading' : ''}`}
+              className={`speak-button ${isSpeaking ? 'speaking' : ''} ${isLoadingAudio ? 'loading' : ''} ${isPaused ? 'paused' : ''}`}
             >
-              {isLoadingAudio ? '⏳ Loading...' : isSpeaking ? '⏸️ Pause' : '🔊 Speak'}
+              {isLoadingAudio ? '⏳ Loading...' : 
+               isSpeaking ? (isPaused ? '▶️ Resume' : '⏸️ Pause') : 
+               '🔊 Speak'}
             </button>
+
+            {isSpeaking && (
+              <button
+                onClick={fastForward}
+                disabled={currentAudioIndex >= totalAudioCount - 1}
+                className="control-button fast-forward-button"
+                title="Next sentence"
+              >
+                ⏭️
+              </button>
+            )}
 
             {(isSpeaking || isLoadingAudio) && (
               <button onClick={stopSpeaking} className="stop-button">
@@ -253,9 +320,9 @@ const BookReader = () => {
               </button>
             )}
 
-            {isSpeaking && audioQueue.length > 0 && (
+            {isSpeaking && totalAudioCount > 0 && (
               <div className="audio-progress">
-                {currentAudioIndex + 1} / {audioQueue.length}
+                {currentAudioIndex + 1} / {totalAudioCount}
               </div>
             )}
           </div>
@@ -307,31 +374,25 @@ const BookReader = () => {
 
         {/* Hidden audio element for playback */}
         <audio
+          key="tts-audio-player"
           ref={audioRef}
           onEnded={handleAudioEnded}
           onError={(e) => {
-            console.error('Audio playback error:', e);
             // Try to continue with next audio instead of stopping completely
-            if (isSpeaking && currentAudioIndex + 1 < audioQueue.length) {
+            if (isSpeaking && currentAudioIndex + 1 < totalAudioCount) {
               handleAudioEnded();
             } else {
               stopSpeaking();
             }
           }}
-          onLoadStart={() => {
-            console.log('Audio loading started');
-          }}
-          onCanPlay={() => {
-            console.log('Audio can play');
-          }}
           style={{ display: 'none' }}
+          preload="none"
         />
       </div>
     );
   }
 
-  console.log('Rendering TOC view - chapters:', chapters.length, 'book:', book?.title);
-  
+
   return (
     <div className="book-reader-container">
       <div className="book-header">
@@ -355,10 +416,7 @@ const BookReader = () => {
             {chapters.map((chapter, index) => (
               <button
                 key={`${chapter.id}-${index}`}
-                onClick={() => {
-                  console.log('Chapter clicked:', chapter.id);
-                  navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapter.id}`);
-                }}
+                onClick={() => navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapter.id}`)}
                 className="chapter-item"
               >
                 <span className="chapter-number">{index + 1}.</span>

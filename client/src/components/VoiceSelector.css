@@ -1,0 +1,100 @@
+.voice-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-selection label {
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+}
+
+.voice-dropdown {
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  background-color: white;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.voice-dropdown:hover {
+  border-color: #007bff;
+}
+
+.voice-dropdown:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.voice-dropdown:disabled {
+  background-color: #f8f9fa;
+  color: #6c757d;
+  cursor: not-allowed;
+  border-color: #dee2e6;
+}
+
+.voice-dropdown.loading {
+  background-color: #f8f9fa;
+  color: #6c757d;
+}
+
+.voice-dropdown.error {
+  background-color: #fff5f5;
+  color: #dc3545;
+  border-color: #dc3545;
+}
+
+.voice-dropdown optgroup {
+  font-weight: bold;
+  color: #495057;
+  background-color: #f8f9fa;
+  padding: 4px;
+}
+
+.voice-dropdown option {
+  font-weight: normal;
+  color: #212529;
+  background-color: white;
+  padding: 4px 8px;
+}
+
+.voice-dropdown option:hover,
+.voice-dropdown option:focus {
+  background-color: #e9ecef;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .voice-selection {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  
+  .voice-dropdown {
+    min-width: 180px;
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .voice-selection {
+    width: 100%;
+  }
+  
+  .voice-selection label {
+    font-size: 12px;
+  }
+  
+  .voice-dropdown {
+    min-width: auto;
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+}

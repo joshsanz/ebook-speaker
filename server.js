@@ -2,7 +2,6 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const fetch = require('node-fetch');
 const EpubReader = require('./epub-reader');
 
 const app = express();
@@ -14,6 +13,11 @@ app.use(express.json());
 
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, 'client/build')));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
 // Store active EPUB readers
 const epubReaders = new Map();
@@ -111,6 +115,25 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
     }
 });
 
+// TTS Voices endpoint
+app.get('/api/tts/voices', async (req, res) => {
+    try {
+        const { default: fetch } = await import('node-fetch');
+        const ttsServiceUrl = process.env.TTS_SERVICE_URL || 'http://localhost:5005';
+        const ttsResponse = await fetch(`${ttsServiceUrl}/v1/audio/voices`);
+
+        if (!ttsResponse.ok) {
+            throw new Error(`TTS server error: ${ttsResponse.status} - ${ttsResponse.statusText}`);
+        }
+
+        const voices = await ttsResponse.json();
+        res.json(voices);
+    } catch (error) {
+        console.error('Error fetching voices:', error);
+        res.status(500).json({ error: 'Failed to fetch voices from TTS service' });
+    }
+});
+
 // Proxy endpoint for TTS requests
 app.post('/api/tts/speech', async (req, res) => {
     try {
@@ -124,13 +147,15 @@ app.post('/api/tts/speech', async (req, res) => {
         }
 
         // Forward request to TTS server
-        const ttsResponse = await fetch('http://localhost:5005/v1/audio/speech', {
+        const { default: fetch } = await import('node-fetch');
+        const ttsServiceUrl = process.env.TTS_SERVICE_URL || 'http://localhost:5005';
+        const ttsResponse = await fetch(`${ttsServiceUrl}/v1/audio/speech`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                model: model || 'orpheus',
+                model: model || 'kokoro',
                 input,
                 voice,
                 response_format: response_format || 'wav',

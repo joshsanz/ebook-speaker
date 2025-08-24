@@ -1,20 +1,20 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 export const useCleanup = () => {
   const cleanupFunctionsRef = useRef([]);
 
   // Add a cleanup function
-  const addCleanup = (cleanupFn) => {
+  const addCleanup = useCallback((cleanupFn) => {
     cleanupFunctionsRef.current.push(cleanupFn);
-  };
+  }, []);
 
   // Remove a specific cleanup function
-  const removeCleanup = (cleanupFn) => {
+  const removeCleanup = useCallback((cleanupFn) => {
     cleanupFunctionsRef.current = cleanupFunctionsRef.current.filter(fn => fn !== cleanupFn);
-  };
+  }, []);
 
   // Execute all cleanup functions immediately
-  const executeCleanup = () => {
+  const executeCleanup = useCallback(() => {
     cleanupFunctionsRef.current.forEach(cleanupFn => {
       try {
         cleanupFn();
@@ -23,14 +23,14 @@ export const useCleanup = () => {
       }
     });
     cleanupFunctionsRef.current = [];
-  };
+  }, []);
 
   // Auto cleanup on unmount
   useEffect(() => {
     return () => {
       executeCleanup();
     };
-  }, []);
+  }, [executeCleanup]);
 
   return {
     addCleanup,

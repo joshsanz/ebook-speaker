@@ -155,3 +155,4 @@ Desktop.ini
 # *.epub
 
 data/
+.claude/
