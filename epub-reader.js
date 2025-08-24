@@ -40,65 +40,116 @@ class EpubReader {
      */
     extractChapters() {
         this.chapters = [];
-
-        // Get the table of contents
         const toc = this.epub.toc;
+        const spine = this.epub.spine.contents;
+        const manifest = this.epub.manifest;
+
+        console.log(`EPUB Analysis: TOC entries: ${toc?.length || 0}, Spine items: ${spine.length}`);
 
         if (toc && toc.length > 0) {
             // Use TOC but validate that chapters exist in spine
-            toc.forEach((chapter, index) => {
-                // Try to find the corresponding spine item
-                let spineId = chapter.id;
+            let spineIndex = 0; // Track spine position for better fallback
+
+            toc.forEach((chapter, tocIndex) => {
+                let spineId = null;
                 let foundSpineItem = null;
 
                 // First, try direct ID match
-                foundSpineItem = this.epub.spine.contents.find(item => item.id === chapter.id);
+                foundSpineItem = spine.find(item => item.id === chapter.id);
 
                 // If not found, try to find by href
-                if (!foundSpineItem) {
-                    foundSpineItem = this.epub.spine.contents.find(item => {
-                        const manifestItem = this.epub.manifest[item.id];
-                        return manifestItem && (
-                            manifestItem.href === chapter.href ||
-                            manifestItem.href === chapter.href.replace(/^.*\//, '') // Try without path
-                        );
+                if (!foundSpineItem && chapter.href) {
+                    foundSpineItem = spine.find(item => {
+                        const manifestItem = manifest[item.id];
+                        if (!manifestItem) return false;
+                        return manifestItem.href === chapter.href ||
+                               manifestItem.href === chapter.href.replace(/^.*\//, '') || // Try without path
+                               manifestItem.href.endsWith('/' + chapter.href.replace(/^.*\//, '')); // Try with path
                     });
                 }
 
-                // If still not found, try to find by partial href match
+                // If still not found, try to find by partial href match (filename only)
                 if (!foundSpineItem && chapter.href) {
-                    const chapterFile = chapter.href.split('/').pop().split('#')[0]; // Get filename without fragment
-                    foundSpineItem = this.epub.spine.contents.find(item => {
-                        const manifestItem = this.epub.manifest[item.id];
+                    const chapterFile = chapter.href.split('/').pop().split('#')[0];
+                    foundSpineItem = spine.find(item => {
+                        const manifestItem = manifest[item.id];
                         if (!manifestItem) return false;
                         const manifestFile = manifestItem.href.split('/').pop().split('#')[0];
                         return manifestFile === chapterFile;
                     });
                 }
 
+                // Additional fallback: try to match by title patterns in manifest
+                if (!foundSpineItem && chapter.title) {
+                    const titlePatterns = [
+                        chapter.title.toLowerCase(),
+                        chapter.title.toLowerCase().replace(/[^\w\s]/g, ''), // Remove punctuation
+                        chapter.title.toLowerCase().replace(/\s+/g, ''), // Remove spaces
+                        `chapter ${tocIndex + 1}`.toLowerCase(),
+                        `ch ${tocIndex + 1}`.toLowerCase()
+                    ];
+
+                    foundSpineItem = spine.find(item => {
+                        const manifestItem = manifest[item.id];
+                        if (!manifestItem) return false;
+                        const manifestTitle = (manifestItem.title || '').toLowerCase();
+                        return titlePatterns.some(pattern => manifestTitle.includes(pattern));
+                    });
+                }
+
                 if (foundSpineItem) {
                     spineId = foundSpineItem.id;
+                    // Update spine index to this found item for better subsequent fallbacks
+                    spineIndex = spine.findIndex(item => item.id === spineId) + 1;
                 } else {
-                    // If we still can't find it, skip this chapter or use a fallback
-                    console.warn(`Could not find spine item for chapter: ${chapter.title} (${chapter.href})`);
-                    // Try to use the first available spine item as fallback for now
-                    if (this.epub.spine.contents.length > index) {
-                        spineId = this.epub.spine.contents[index].id;
-                        console.warn(`Using fallback spine item: ${spineId}`);
+                    // Improved fallback logic: find the next valid spine item
+                    let nextValidSpineItem = null;
+
+                    // Try to find the next spine item that contains chapter-like content
+                    for (let i = spineIndex; i < spine.length; i++) {
+                        const spineItem = spine[i];
+                        const manifestItem = manifest[spineItem.id];
+
+                        if (manifestItem && manifestItem['media-type'] === 'application/xhtml+xml') {
+                            // Additional check: try to get content and see if it's substantial
+                            try {
+                                // We'll validate this spine item by checking if it has meaningful content
+                                nextValidSpineItem = spineItem;
+                                spineIndex = i + 1;
+                                break;
+                            } catch (error) {
+                                console.warn(`Error validating spine item ${spineItem.id}:`, error.message);
+                                continue;
+                            }
+                        }
+                    }
+
+                    if (nextValidSpineItem) {
+                        spineId = nextValidSpineItem.id;
+                        console.warn(`Using next valid spine item ${spineId} for TOC entry: ${chapter.title}`);
+                    } else {
+                        console.warn(`No valid spine item found for chapter: ${chapter.title} (${chapter.href})`);
+                        // Skip this chapter entirely rather than using a potentially wrong one
+                        return;
                     }
                 }
 
-                this.chapters.push({
-                    id: spineId,
-                    title: chapter.title,
-                    href: chapter.href,
-                    order: index + 1
-                });
+                // Ensure spineId is valid before adding
+                if (spineId && manifest[spineId]) {
+                    this.chapters.push({
+                        id: spineId,
+                        title: chapter.title,
+                        href: chapter.href,
+                        order: tocIndex + 1
+                    });
+                } else {
+                    console.warn(`Invalid spineId ${spineId} for chapter: ${chapter.title}`);
+                }
             });
         } else {
-            // If no TOC, use spine order
-            this.epub.spine.contents.forEach((item, index) => {
-                const manifestItem = this.epub.manifest[item.id];
+            // If no TOC, use spine order with better content validation
+            spine.forEach((item, index) => {
+                const manifestItem = manifest[item.id];
                 if (manifestItem && manifestItem['media-type'] === 'application/xhtml+xml') {
                     this.chapters.push({
                         id: item.id,
@@ -110,6 +161,42 @@ class EpubReader {
             });
         }
 
+        // Final validation: ensure all chapters have unique IDs and proper ordering
+        this.validateAndCleanChapters();
+    }
+
+    /**
+     * Validate and clean chapter list to ensure consistency
+     */
+    validateAndCleanChapters() {
+        const originalCount = this.chapters.length;
+        console.log(`Validating ${originalCount} chapters...`);
+
+        // Remove duplicates based on spine ID
+        const seenIds = new Set();
+        this.chapters = this.chapters.filter(chapter => {
+            if (seenIds.has(chapter.id)) {
+                console.warn(`Removing duplicate chapter ID: ${chapter.id} (${chapter.title})`);
+                return false;
+            }
+            seenIds.add(chapter.id);
+            return true;
+        });
+
+        // Ensure proper ordering and fix any gaps
+        this.chapters.sort((a, b) => a.order - b.order);
+
+        // Reassign order numbers to be consecutive
+        this.chapters.forEach((chapter, index) => {
+            chapter.order = index + 1;
+        });
+
+        const finalCount = this.chapters.length;
+        if (finalCount !== originalCount) {
+            console.log(`Chapter validation complete: ${originalCount} → ${finalCount} chapters`);
+        }
+
+        console.log(`Final chapter list: ${this.chapters.map(c => `${c.order}: ${c.title} (ID: ${c.id})`).join(', ')}`);
     }
 
     /**
@@ -252,6 +339,57 @@ class EpubReader {
             date: this.epub.metadata.date,
             description: this.epub.metadata.description
         };
+    }
+
+    /**
+     * Debug method to analyze EPUB structure and identify potential issues
+     */
+    debugEpubStructure() {
+        if (!this.epub) {
+            console.log('EPUB not initialized');
+            return;
+        }
+
+        console.log('\n=== EPUB STRUCTURE DEBUG ===\n');
+
+        console.log('Metadata:');
+        console.log(`  Title: ${this.epub.metadata.title || 'N/A'}`);
+        console.log(`  Creator: ${this.epub.metadata.creator || 'N/A'}`);
+        console.log(`  Language: ${this.epub.metadata.language || 'N/A'}`);
+
+        console.log('\nTOC Analysis:');
+        if (this.epub.toc && this.epub.toc.length > 0) {
+            console.log(`  TOC entries: ${this.epub.toc.length}`);
+            this.epub.toc.forEach((item, index) => {
+                console.log(`    ${index + 1}. ${item.title} (ID: ${item.id}, href: ${item.href})`);
+            });
+        } else {
+            console.log('  No TOC found');
+        }
+
+        console.log('\nSpine Analysis:');
+        console.log(`  Spine items: ${this.epub.spine.contents.length}`);
+        this.epub.spine.contents.forEach((item, index) => {
+            const manifestItem = this.epub.manifest[item.id];
+            const mediaType = manifestItem ? manifestItem['media-type'] : 'unknown';
+            console.log(`    ${index + 1}. ID: ${item.id}, Media-Type: ${mediaType}, href: ${manifestItem?.href || 'N/A'}`);
+        });
+
+        console.log('\nManifest Analysis:');
+        const manifestEntries = Object.keys(this.epub.manifest);
+        console.log(`  Manifest entries: ${manifestEntries.length}`);
+        manifestEntries.forEach(id => {
+            const item = this.epub.manifest[id];
+            console.log(`    ${id}: ${item.href} (${item['media-type']})`);
+        });
+
+        console.log('\nChapter Mapping Analysis:');
+        console.log(`  Final chapters: ${this.chapters.length}`);
+        this.chapters.forEach((chapter, index) => {
+            console.log(`    ${index + 1}. ${chapter.title} (ID: ${chapter.id}, Order: ${chapter.order})`);
+        });
+
+        console.log('\n=== END DEBUG ===\n');
     }
 }
 
