@@ -3,7 +3,8 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import { useCleanup } from '../hooks/useCleanup';
 import { useVoices } from '../hooks/useVoices';
-import VoiceSelector from './VoiceSelector';
+import VoiceSelector from './VoiceSelector.jsx';
+import SpeedSelector from './SpeedSelector.jsx';
 import './BookReader.css';
 
 const BookReader = () => {
@@ -18,6 +19,7 @@ const BookReader = () => {
   const [error, setError] = useState(null);
   const [isReading, setIsReading] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState('af_heart');
+  const [selectedSpeed, setSelectedSpeed] = useState(1.0);
 
   // Use custom hooks for TTS and cleanup
   const {
@@ -33,7 +35,9 @@ const BookReader = () => {
     fastForward,
     rewind,
     stopSpeaking,
-    handleAudioEnded
+    handleAudioEnded,
+    handleSpeedChange,
+    handleVoiceChange
   } = useTTS();
 
   const { addCleanup, executeCleanup } = useCleanup();
@@ -99,6 +103,18 @@ const BookReader = () => {
 
 
 
+  // Handle voice selection changes
+  const handleVoiceSelectionChange = useCallback(async (newVoice) => {
+    setSelectedVoice(newVoice);
+    await handleVoiceChange(newVoice);
+  }, [handleVoiceChange]);
+
+  // Handle speed selection changes
+  const handleSpeedSelectionChange = useCallback(async (newSpeed) => {
+    setSelectedSpeed(newSpeed);
+    await handleSpeedChange(newSpeed);
+  }, [handleSpeedChange]);
+
   // Handle speak/pause button click
   const handleSpeakClick = async () => {
     // If currently speaking, toggle pause/resume
@@ -118,7 +134,7 @@ const BookReader = () => {
     }
 
     try {
-      await speakText(chapterTextContent, selectedVoice);
+      await speakText(chapterTextContent, selectedVoice, selectedSpeed);
     } catch (error) {
       console.error('TTS Error:', error);
 
@@ -276,10 +292,16 @@ const BookReader = () => {
               voices={voices}
               groupedVoices={groupedVoices}
               selectedVoice={selectedVoice}
-              onVoiceChange={setSelectedVoice}
-              disabled={isSpeaking || isLoadingAudio}
+              onVoiceChange={handleVoiceSelectionChange}
+              disabled={isLoadingAudio}
               loading={voicesLoading}
               error={voicesError}
+            />
+
+            <SpeedSelector
+              selectedSpeed={selectedSpeed}
+              onSpeedChange={handleSpeedSelectionChange}
+              disabled={isLoadingAudio}
             />
 
             {isSpeaking && (
