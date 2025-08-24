@@ -10,6 +10,9 @@ export const useTTS = () => {
   const audioRef = useRef(null);
   const abortControllerRef = useRef(null);
   const audioQueueRef = useRef([]);
+  const sentencesRef = useRef([]);
+  const currentVoiceRef = useRef('');
+  const currentSpeedRef = useRef(1.0);
   const isProcessingEndRef = useRef(false);
   const isNavigatingRef = useRef(false);
 
@@ -61,7 +64,7 @@ export const useTTS = () => {
   }, []);
 
   // Generate audio for a single sentence
-  const generateAudioForSentence = useCallback(async (text, voice) => {
+  const generateAudioForSentence = useCallback(async (text, voice, speed = 1.0) => {
     try {
       const response = await fetch('/api/tts/speech', {
         method: 'POST',
@@ -73,13 +76,19 @@ export const useTTS = () => {
           input: text,
           voice: voice,
           response_format: 'wav',
-          speed: 1.0
+          speed: speed
         }),
         signal: abortControllerRef.current?.signal
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        
+        // Handle service shutdown gracefully
+        if (response.status === 503) {
+          throw new Error('TTS service is restarting. Please try again in a moment.');
+        }
+        
         throw new Error(`TTS API error: ${response.status} - ${errorData.message || response.statusText}`);
       }
 
@@ -99,12 +108,17 @@ export const useTTS = () => {
   }, []);
 
   // Generate audio queue with streaming playback
-  const generateAudioQueue = useCallback(async (text, voice) => {
+  const generateAudioQueue = useCallback(async (text, voice, speed = 1.0) => {
     const sentences = splitIntoSentences(text);
 
     if (sentences.length === 0) {
       return [];
     }
+
+    // Store sentences and current settings for later regeneration
+    sentencesRef.current = sentences;
+    currentVoiceRef.current = voice;
+    currentSpeedRef.current = speed;
 
     const audioUrls = [];
     setIsLoadingAudio(true);
@@ -117,7 +131,7 @@ export const useTTS = () => {
           break;
         }
 
-        const audioUrl = await generateAudioForSentence(sentences[i], voice);
+        const audioUrl = await generateAudioForSentence(sentences[i], voice, speed);
         audioUrls.push(audioUrl);
       }
 
@@ -135,7 +149,7 @@ export const useTTS = () => {
 
               try {
                 console.log(`Generating audio for sentence ${i + 1}/${sentences.length}`);
-                const audioUrl = await generateAudioForSentence(sentences[i], voice);
+                const audioUrl = await generateAudioForSentence(sentences[i], voice, speed);
                 audioQueueRef.current.push(audioUrl);
                 console.log(`Added audio ${i} to queue. Queue length: ${audioQueueRef.current.length}`);
               } catch (error) {
@@ -160,6 +174,59 @@ export const useTTS = () => {
       throw error;
     }
   }, [splitIntoSentences, generateAudioForSentence]);
+
+  // Regenerate remaining audio queue from current position with new settings
+  const regenerateRemainingQueue = useCallback(async (newVoice, newSpeed) => {
+    if (!sentencesRef.current.length || !isSpeaking) {
+      return;
+    }
+
+    // Update current settings
+    currentVoiceRef.current = newVoice;
+    currentSpeedRef.current = newSpeed;
+
+    // Calculate which sentences need to be regenerated (from next index onwards)
+    const nextAudioIndex = currentAudioIndex + 1;
+    if (nextAudioIndex >= sentencesRef.current.length) {
+      // We're at the last sentence, nothing to regenerate
+      return;
+    }
+
+    const remainingSentences = sentencesRef.current.slice(nextAudioIndex);
+    
+    // Clear the remaining audio queue (keep current and previous)
+    const currentAndPreviousAudio = audioQueueRef.current.slice(0, nextAudioIndex);
+    audioQueueRef.current = currentAndPreviousAudio;
+
+    // Generate new audio for remaining sentences in background
+    try {
+      for (let i = 0; i < remainingSentences.length; i++) {
+        const sentenceIndex = nextAudioIndex + i;
+        
+        if (abortControllerRef.current?.signal.aborted) {
+          break;
+        }
+
+        try {
+          console.log(`Regenerating audio for sentence ${sentenceIndex + 1}/${sentencesRef.current.length} with speed ${newSpeed}`);
+          const audioUrl = await generateAudioForSentence(remainingSentences[i], newVoice, newSpeed);
+          
+          // Add to queue at the correct position
+          audioQueueRef.current[sentenceIndex] = audioUrl;
+          console.log(`Regenerated audio ${sentenceIndex} with new speed. Queue length: ${audioQueueRef.current.length}`);
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            console.log(`Audio regeneration cancelled for sentence ${sentenceIndex + 1}`);
+            break;
+          } else {
+            console.error(`Failed to regenerate audio for sentence ${sentenceIndex + 1}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error regenerating audio queue:', error);
+    }
+  }, [currentAudioIndex, isSpeaking, generateAudioForSentence]);
 
   // Handle audio ended event
   const handleAudioEnded = useCallback(() => {
@@ -373,6 +440,9 @@ export const useTTS = () => {
     
     // Reset all state in one batch to minimize re-renders
     audioQueueRef.current = [];
+    sentencesRef.current = [];
+    currentVoiceRef.current = '';
+    currentSpeedRef.current = 1.0;
     isProcessingEndRef.current = false; // Reset the processing flag
     isNavigatingRef.current = false; // Reset the navigation flag
     setTotalAudioCount(0);
@@ -383,7 +453,7 @@ export const useTTS = () => {
   }, []); // Remove dependencies to make it stable
 
   // Start speaking function
-  const speakText = useCallback(async (text, voice = 'mia') => {
+  const speakText = useCallback(async (text, voice = 'mia', speed = 1.0) => {
     if (isSpeaking) {
       stopSpeaking();
       return;
@@ -398,7 +468,7 @@ export const useTTS = () => {
       setIsSpeaking(true);
       setCurrentAudioIndex(0);
 
-      const audioUrls = await generateAudioQueue(text, voice);
+      const audioUrls = await generateAudioQueue(text, voice, speed);
 
       if (audioUrls.length > 0 && abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
         setTimeout(() => {
@@ -450,6 +520,30 @@ export const useTTS = () => {
     };
   }, []);
 
+  // Handle speed changes during playback
+  const handleSpeedChange = useCallback(async (newSpeed) => {
+    if (!isSpeaking) {
+      // Just update the current speed for next playback
+      currentSpeedRef.current = newSpeed;
+      return;
+    }
+
+    // Regenerate remaining queue with new speed
+    await regenerateRemainingQueue(currentVoiceRef.current, newSpeed);
+  }, [isSpeaking, regenerateRemainingQueue]);
+
+  // Handle voice changes during playback  
+  const handleVoiceChange = useCallback(async (newVoice) => {
+    if (!isSpeaking) {
+      // Just update the current voice for next playback
+      currentVoiceRef.current = newVoice;
+      return;
+    }
+
+    // Regenerate remaining queue with new voice
+    await regenerateRemainingQueue(newVoice, currentSpeedRef.current);
+  }, [isSpeaking, regenerateRemainingQueue]);
+
   return {
     isSpeaking,
     isPaused,
@@ -463,6 +557,8 @@ export const useTTS = () => {
     fastForward,
     rewind,
     stopSpeaking,
-    handleAudioEnded
+    handleAudioEnded,
+    handleSpeedChange,
+    handleVoiceChange
   };
 };
