@@ -206,6 +206,44 @@ const BookReader = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getCurrentChapterIndex, navigate, filename, chapters]);
 
+  // Handle internal link clicks
+  const handleInternalLinkClick = useCallback((event) => {
+    const link = event.target.closest('a[data-internal-link="true"]');
+    if (!link) return;
+
+    event.preventDefault();
+    
+    const chapterId = link.getAttribute('data-chapter-id');
+    const fragment = link.getAttribute('data-fragment');
+    
+    if (chapterId) {
+      // Stop current speech before navigating
+      stopSpeaking();
+      executeCleanup();
+      
+      // Navigate to the new chapter
+      const newPath = `/book/${encodeURIComponent(filename)}/chapter/${chapterId}`;
+      
+      // Handle fragment navigation after React router navigation completes
+      if (fragment) {
+        navigate(newPath);
+        // Use setTimeout to wait for navigation and DOM update
+        setTimeout(() => {
+          const targetElement = document.getElementById(fragment);
+          if (targetElement) {
+            targetElement.scrollIntoView({ 
+              behavior: 'smooth', 
+              block: 'start' 
+            });
+          }
+        }, 100);
+      } else {
+        navigate(newPath);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate, filename, stopSpeaking, executeCleanup]);
+
   // Reset state when navigating between routes
   useEffect(() => {
     // Stop any current speech when navigating
@@ -370,7 +408,7 @@ const BookReader = () => {
           </button>
         </div>
 
-        <div className="chapter-content">
+        <div className="chapter-content" onClick={handleInternalLinkClick}>
           <div dangerouslySetInnerHTML={{ __html: chapterContent }} />
         </div>
 

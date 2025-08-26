@@ -37,14 +37,15 @@
 
 .books-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, max-content));
   gap: 1.5rem;
   margin-top: 2rem;
+  justify-content: start;
 }
 
 .book-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: space-between;
   padding: 1.5rem;
   background: white;
@@ -54,12 +55,24 @@
   color: inherit;
   transition: all 0.3s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  max-width: 320px;
+  width: max-content;
+  min-width: 280px;
 }
 
 .book-card:hover {
   border-color: #2196f3;
   box-shadow: 0 4px 16px rgba(33, 150, 243, 0.2);
   transform: translateY(-2px);
+}
+
+.book-card.selected {
+    border-color: #2196f3;
+    background-color: #e3f2fd;
+}
+
+.book-card.selection-mode {
+    cursor: pointer;
 }
 
 .book-info {
@@ -91,6 +104,214 @@
 .book-card:hover .book-arrow {
   transform: translateX(4px);
 }
+
+.controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 2rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.controls input[type="file"] {
+  display: none;
+}
+
+.controls .file-upload-label {
+  background-color: #2196f3;
+  color: white;
+  padding: 0.8rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  border: 2px solid #2196f3;
+  box-sizing: border-box;
+  height: 2.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.controls .file-upload-label:hover {
+  background-color: #1976d2;
+  border-color: #1976d2;
+}
+
+.controls button {
+  background-color: #f0f0f0;
+  border: 2px solid #ccc;
+  padding: 0.8rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  box-sizing: border-box;
+  height: 2.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.controls button:hover {
+  background-color: #e0e0e0;
+}
+
+.controls button.active {
+  background-color: #2196f3;
+  color: white;
+  border-color: #2196f3;
+}
+
+.view-toggle-button {
+  background-color: #2196f3 !important;
+  color: white !important;
+  border-color: #2196f3 !important;
+}
+
+.view-toggle-button:hover {
+  background-color: #1976d2 !important;
+  border-color: #1976d2 !important;
+}
+
+.delete-selected-button {
+  background-color: #ffebee !important;
+  color: #d32f2f !important;
+  border-color: #d32f2f !important;
+}
+
+.delete-selected-button:hover {
+  background-color: #f44336 !important;
+  color: white !important;
+  border-color: #d32f2f !important;
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sort-controls select {
+  padding: 0.8rem;
+  border-radius: 8px;
+  border: 2px solid #ccc;
+  box-sizing: border-box;
+  height: 2.8rem;
+}
+
+.sort-controls button {
+  padding: 0.8rem;
+  height: 2.8rem;
+  box-sizing: border-box;
+}
+
+.book-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  margin-top: 2rem;
+}
+
+.book-list-table thead {
+  background: linear-gradient(135deg, #2196f3, #1976d2);
+  color: white;
+}
+
+.book-list-table th {
+  padding: 1.2rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+  transition: background-color 0.3s ease;
+  position: relative;
+  user-select: none;
+}
+
+.book-list-table th:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.book-list-table th:first-child {
+  border-top-left-radius: 12px;
+}
+
+.book-list-table th:last-child {
+  border-top-right-radius: 12px;
+}
+
+.book-list-table td {
+  padding: 1rem;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 0.95rem;
+  vertical-align: middle;
+  transition: background-color 0.3s ease;
+}
+
+.book-list-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.book-list-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.book-list-table .selected {
+  background-color: #e3f2fd !important;
+  border-left: 4px solid #2196f3;
+}
+
+.book-list-table .selected td:first-child {
+  padding-left: 0.75rem;
+}
+
+.book-list-table td a {
+  color: #2196f3;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+
+.book-list-table td a:hover {
+  color: #1976d2;
+  text-decoration: underline;
+}
+
+.book-list-table input[type="checkbox"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  cursor: pointer;
+  accent-color: #2196f3;
+}
+
+.book-list-table th[data-sort] {
+  position: relative;
+}
+
+.book-list-table th[data-sort]::after {
+  content: '';
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  opacity: 0.6;
+}
+
+.book-list-table .clickable-row {
+  cursor: pointer;
+}
+
+.book-list-table .selection-mode {
+  cursor: pointer;
+}
+
 
 /* Responsive design */
 @media (max-width: 768px) {
