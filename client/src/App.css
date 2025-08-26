@@ -33,6 +33,18 @@ body {
   letter-spacing: 0.5px;
 }
 
+.header-title-link {
+  text-decoration: none;
+  color: white;
+  display: block;
+  transition: opacity 0.3s ease;
+}
+
+.header-title-link:hover {
+  opacity: 0.9;
+  text-decoration: none;
+}
+
 main {
   min-height: calc(100vh - 120px);
   padding: 0;
