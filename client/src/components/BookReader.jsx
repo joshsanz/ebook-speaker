@@ -18,8 +18,53 @@ const BookReader = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isReading, setIsReading] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState('af_heart');
-  const [selectedSpeed, setSelectedSpeed] = useState(1.0);
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    const saved = localStorage.getItem('ebook-speaker-selected-voice');
+    return saved || 'af_heart';
+  });
+  const [selectedSpeed, setSelectedSpeed] = useState(() => {
+    const saved = localStorage.getItem('ebook-speaker-selected-speed');
+    return saved ? parseFloat(saved) : 1.0;
+  });
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
+  const [shouldAutoAdvance, setShouldAutoAdvance] = useState(false);
+  const [autoStartTTS, setAutoStartTTS] = useState(false);
+  const [controlsHidden, setControlsHidden] = useState(false);
+
+  // Auto-advance callback function (defined early for useTTS hook)
+  const handleAutoAdvance = useCallback(() => {
+    if (autoAdvanceEnabled && chapters.length > 0 && currentChapter) {
+      // Get current chapter index inline to avoid dependency issues
+      let currentIndex = chapters.findIndex(ch => ch.id === currentChapter.id);
+      if (currentIndex === -1) {
+        // Fallback to order-based lookup
+        currentIndex = chapters.findIndex(ch => ch.order === currentChapter.order);
+      }
+
+      if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
+        console.log('Auto-advancing to next chapter');
+        // Set flags for navigation and auto-start
+        setShouldAutoAdvance(true);
+        setAutoStartTTS(true); // Persistent flag that survives navigation
+      }
+    }
+  }, [autoAdvanceEnabled, chapters, currentChapter]);
+
+  // Handle auto-advance navigation in useEffect to avoid render-time navigation
+  useEffect(() => {
+    if (shouldAutoAdvance && currentChapter) {
+      let currentIndex = chapters.findIndex(ch => ch.id === currentChapter.id);
+      if (currentIndex === -1) {
+        // Fallback to order-based lookup
+        currentIndex = chapters.findIndex(ch => ch.order === currentChapter.order);
+      }
+
+      if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
+        navigate(`/book/${encodeURIComponent(filename)}/chapter/${chapters[currentIndex + 1].id}`);
+      }
+      setShouldAutoAdvance(false); // Reset the flag
+    }
+  }, [shouldAutoAdvance, currentChapter, chapters, filename, navigate]);
 
   // Use custom hooks for TTS and cleanup
   const {
@@ -38,7 +83,7 @@ const BookReader = () => {
     handleAudioEnded,
     handleSpeedChange,
     handleVoiceChange
-  } = useTTS();
+  } = useTTS(handleAutoAdvance);
 
   const { addCleanup, executeCleanup } = useCleanup();
 
@@ -148,6 +193,13 @@ const BookReader = () => {
     }
   };
 
+  // Handle auto-advance toggle
+  const handleAutoAdvanceToggle = useCallback(() => {
+    const newValue = !autoAdvanceEnabled;
+    setAutoAdvanceEnabled(newValue);
+    localStorage.setItem('ebook-speaker-auto-advance', JSON.stringify(newValue));
+  }, [autoAdvanceEnabled]);
+
 
   const goBackToTOC = useCallback(() => {
     // Stop speaking first, then execute other cleanup
@@ -212,18 +264,18 @@ const BookReader = () => {
     if (!link) return;
 
     event.preventDefault();
-    
+
     const chapterId = link.getAttribute('data-chapter-id');
     const fragment = link.getAttribute('data-fragment');
-    
+
     if (chapterId) {
       // Stop current speech before navigating
       stopSpeaking();
       executeCleanup();
-      
+
       // Navigate to the new chapter
       const newPath = `/book/${encodeURIComponent(filename)}/chapter/${chapterId}`;
-      
+
       // Handle fragment navigation after React router navigation completes
       if (fragment) {
         navigate(newPath);
@@ -231,9 +283,9 @@ const BookReader = () => {
         setTimeout(() => {
           const targetElement = document.getElementById(fragment);
           if (targetElement) {
-            targetElement.scrollIntoView({ 
-              behavior: 'smooth', 
-              block: 'start' 
+            targetElement.scrollIntoView({
+              behavior: 'smooth',
+              block: 'start'
             });
           }
         }, 100);
@@ -275,6 +327,49 @@ const BookReader = () => {
     }
   }, [chapterId, chapters, fetchChapterContent]);
 
+  // Auto-start TTS when chapter content is loaded and autoStartTTS is true
+  useEffect(() => {
+    if (autoStartTTS && chapterTextContent && !isSpeaking && !isLoadingAudio && !loading) {
+      console.log('Auto-starting TTS after chapter advance', {
+        autoStartTTS,
+        hasContent: !!chapterTextContent,
+        isSpeaking,
+        isLoadingAudio,
+        loading
+      });
+
+      // Add a small delay to ensure cleanup is complete before starting new TTS
+      const timer = setTimeout(async () => {
+        console.log('Actually calling speakText for auto-advance...');
+        try {
+          await speakText(chapterTextContent, selectedVoice, selectedSpeed);
+          console.log('TTS auto-started successfully');
+        } catch (error) {
+          console.error('Error auto-starting TTS:', error);
+        }
+        setAutoStartTTS(false); // Reset the flag
+      }, 1000); // 1 second delay to ensure everything is ready
+
+      return () => clearTimeout(timer); // Cleanup timer if component unmounts
+    } else if (autoStartTTS) {
+      console.log('Auto-start conditions not met:', {
+        autoStartTTS,
+        hasContent: !!chapterTextContent,
+        isSpeaking,
+        isLoadingAudio,
+        loading
+      });
+    }
+  }, [autoStartTTS, chapterTextContent, isSpeaking, isLoadingAudio, loading, speakText, selectedVoice, selectedSpeed]);
+
+  // Load auto-advance setting from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('ebook-speaker-auto-advance');
+    if (saved !== null) {
+      setAutoAdvanceEnabled(JSON.parse(saved));
+    }
+  }, []);
+
   // Set default voice when voices are loaded
   useEffect(() => {
     if (voices.length > 0 && selectedVoice === 'af_heart') {
@@ -284,6 +379,16 @@ const BookReader = () => {
       }
     }
   }, [voices, getDefaultVoice, selectedVoice]);
+
+  // Save selected voice to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('ebook-speaker-selected-voice', selectedVoice);
+  }, [selectedVoice]);
+
+  // Save selected speed to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('ebook-speaker-selected-speed', selectedSpeed.toString());
+  }, [selectedSpeed]);
 
   // Add TTS cleanup to cleanup manager
   useEffect(() => {
@@ -320,12 +425,25 @@ const BookReader = () => {
   if (isReading && currentChapter) {
     return (
       <div className="book-reader-container">
-        <div className="reader-header">
-          <button onClick={goBackToTOC} className="back-button">
-            ← Back to Table of Contents
-          </button>
-          <h2>{currentChapter.title}</h2>
-          <div className="reader-controls">
+        {/* Floating Audio Controls */}
+        <div className={`floating-controls ${controlsHidden ? 'hidden' : ''}`}>
+          <div className="floating-controls-content">
+            <button
+              onClick={() => setControlsHidden(!controlsHidden)}
+              className="toggle-controls-button"
+              title={controlsHidden ? 'Show controls' : 'Hide controls'}
+            >
+              {controlsHidden ? '👁️' : '🙈'}
+            </button>
+
+            <button
+              onClick={handleAutoAdvanceToggle}
+              className={`auto-advance-button ${autoAdvanceEnabled ? 'enabled' : 'disabled'}`}
+              title={autoAdvanceEnabled ? 'Auto-advance is ON' : 'Auto-advance is OFF'}
+            >
+              Auto-Advance: {autoAdvanceEnabled ? 'ON' : 'OFF'}
+            </button>
+
             <VoiceSelector
               voices={voices}
               groupedVoices={groupedVoices}
@@ -342,50 +460,61 @@ const BookReader = () => {
               disabled={isLoadingAudio}
             />
 
-            {isSpeaking && (
+            <div className="controls-spacer"></div>
+
+            <div className="playback-controls-group">
+              {isSpeaking && (
+                <button
+                  onClick={rewind}
+                  disabled={currentAudioIndex === 0}
+                  className="control-button rewind-button"
+                  title="Previous sentence"
+                >
+                  ⏮️
+                </button>
+              )}
+
               <button
-                onClick={rewind}
-                disabled={currentAudioIndex === 0}
-                className="control-button rewind-button"
-                title="Previous sentence"
+                onClick={handleSpeakClick}
+                disabled={isLoadingAudio}
+                className={`speak-button ${isSpeaking ? 'speaking' : ''} ${isLoadingAudio ? 'loading' : ''} ${isPaused ? 'paused' : ''}`}
               >
-                ⏮️
+                {isLoadingAudio ? '⏳ Loading...' :
+                 isSpeaking ? (isPaused ? '▶️ Resume' : '⏸️ Pause') :
+                 '🔊 Speak'}
               </button>
-            )}
 
-            <button
-              onClick={handleSpeakClick}
-              disabled={isLoadingAudio}
-              className={`speak-button ${isSpeaking ? 'speaking' : ''} ${isLoadingAudio ? 'loading' : ''} ${isPaused ? 'paused' : ''}`}
-            >
-              {isLoadingAudio ? '⏳ Loading...' : 
-               isSpeaking ? (isPaused ? '▶️ Resume' : '⏸️ Pause') : 
-               '🔊 Speak'}
-            </button>
+              {isSpeaking && (
+                <button
+                  onClick={fastForward}
+                  disabled={currentAudioIndex >= totalAudioCount - 1}
+                  className="control-button fast-forward-button"
+                  title="Next sentence"
+                >
+                  ⏭️
+                </button>
+              )}
 
-            {isSpeaking && (
-              <button
-                onClick={fastForward}
-                disabled={currentAudioIndex >= totalAudioCount - 1}
-                className="control-button fast-forward-button"
-                title="Next sentence"
-              >
-                ⏭️
-              </button>
-            )}
+              {(isSpeaking || isLoadingAudio) && (
+                <button onClick={stopSpeaking} className="stop-button">
+                  ⏹️ Stop
+                </button>
+              )}
 
-            {(isSpeaking || isLoadingAudio) && (
-              <button onClick={stopSpeaking} className="stop-button">
-                ⏹️ Stop
-              </button>
-            )}
-
-            {isSpeaking && totalAudioCount > 0 && (
-              <div className="audio-progress">
-                {currentAudioIndex + 1} / {totalAudioCount}
-              </div>
-            )}
+              {isSpeaking && totalAudioCount > 0 && (
+                <div className="audio-progress">
+                  {currentAudioIndex + 1} / {totalAudioCount}
+                </div>
+              )}
+            </div>
           </div>
+        </div>
+
+        <div className="reader-header">
+          <button onClick={goBackToTOC} className="back-button">
+            ← Back to Table of Contents
+          </button>
+          <h2>{currentChapter.title}</h2>
         </div>
 
         <div className="chapter-navigation-top">

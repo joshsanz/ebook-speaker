@@ -109,6 +109,92 @@
   font-weight: 500;
 }
 
+/* Floating Audio Controls */
+.floating-controls {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background-color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 2px solid #e0e0e0;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  margin: -2rem -2rem 2rem -2rem;
+  padding: 1rem 2rem;
+  transition: all 0.3s ease;
+}
+
+.floating-controls.hidden {
+  padding: 0.25rem;
+  border-bottom: none;
+  background-color: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  width: fit-content;
+  margin: -2rem 0 2rem 0;
+}
+
+.floating-controls.hidden .floating-controls-content {
+  justify-content: flex-start;
+  gap: 0;
+  width: fit-content;
+}
+
+.floating-controls-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.floating-controls.hidden .floating-controls-content > *:not(.toggle-controls-button) {
+  display: none;
+}
+
+/* Toggle Controls Button */
+.toggle-controls-button {
+  padding: 0.5rem;
+  border: 2px solid #2196f3;
+  background-color: #e3f2fd;
+  color: #2196f3;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+  line-height: 1;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-controls-button:hover {
+  background-color: #2196f3;
+  color: white;
+}
+
+/* Controls Spacer */
+.controls-spacer {
+  width: 2px;
+  height: 32px;
+  background-color: #e0e0e0;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+/* Playback Controls Group */
+.playback-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
 /* Reader View */
 .reader-header {
   display: flex;
@@ -198,6 +284,43 @@
   padding: 0.3rem 0.6rem;
   border-radius: 4px;
   font-weight: 500;
+}
+
+.auto-advance-button {
+  padding: 0.8rem 1.2rem;
+  border: 2px solid #2196f3;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  min-width: 140px;
+  height: 2.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auto-advance-button.enabled {
+  background-color: #2196f3;
+  color: white;
+  border-color: #2196f3;
+}
+
+.auto-advance-button.enabled:hover {
+  background-color: #1976d2;
+  border-color: #1976d2;
+}
+
+.auto-advance-button.disabled {
+  background-color: #e3f2fd;
+  color: #2196f3;
+  border-color: #2196f3;
+}
+
+.auto-advance-button.disabled:hover {
+  background-color: #2196f3;
+  color: white;
 }
 
 .speak-button,
@@ -466,6 +589,15 @@
     padding: 1rem;
   }
 
+  .floating-controls {
+    margin: -1rem -1rem 1rem -1rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .floating-controls-content {
+    gap: 0.75rem;
+  }
+
   .book-metadata h1 {
     font-size: 2rem;
   }
@@ -531,6 +663,15 @@
 }
 
 @media (max-width: 480px) {
+  .floating-controls {
+    margin: -1rem -1rem 1rem -1rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .floating-controls-content {
+    gap: 0.5rem;
+  }
+
   .reader-controls {
     flex-direction: column;
     align-items: stretch;

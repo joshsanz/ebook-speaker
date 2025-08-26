@@ -11,12 +11,12 @@
 }
 
 .voice-dropdown {
-  min-width: 200px;
-  padding: 8px 12px;
+  min-width: 160px;
+  padding: 6px 8px;
   border: 2px solid #ddd;
   border-radius: 6px;
   background-color: white;
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -76,7 +76,7 @@
     align-items: flex-start;
     gap: 4px;
   }
-  
+
   .voice-dropdown {
     min-width: 180px;
     width: 100%;
@@ -87,11 +87,11 @@
   .voice-selection {
     width: 100%;
   }
-  
+
   .voice-selection label {
     font-size: 12px;
   }
-  
+
   .voice-dropdown {
     min-width: auto;
     font-size: 13px;
