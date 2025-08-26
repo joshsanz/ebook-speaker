@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-export const useTTS = () => {
+export const useTTS = (onAutoAdvance) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [currentAudioIndex, setCurrentAudioIndex] = useState(0);
   const [totalAudioCount, setTotalAudioCount] = useState(0); // For progress display
-  
+
   const audioRef = useRef(null);
   const abortControllerRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -83,21 +83,21 @@ export const useTTS = () => {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
+
         // Handle service shutdown gracefully
         if (response.status === 503) {
           throw new Error('TTS service is restarting. Please try again in a moment.');
         }
-        
+
         throw new Error(`TTS API error: ${response.status} - ${errorData.message || response.statusText}`);
       }
 
       const audioBlob = await response.blob();
-      
+
       if (audioBlob.size === 0) {
         throw new Error('Received empty audio response');
       }
-      
+
       return URL.createObjectURL(audioBlob);
     } catch (error) {
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
@@ -193,7 +193,7 @@ export const useTTS = () => {
     }
 
     const remainingSentences = sentencesRef.current.slice(nextAudioIndex);
-    
+
     // Clear the remaining audio queue (keep current and previous)
     const currentAndPreviousAudio = audioQueueRef.current.slice(0, nextAudioIndex);
     audioQueueRef.current = currentAndPreviousAudio;
@@ -202,7 +202,7 @@ export const useTTS = () => {
     try {
       for (let i = 0; i < remainingSentences.length; i++) {
         const sentenceIndex = nextAudioIndex + i;
-        
+
         if (abortControllerRef.current?.signal.aborted) {
           break;
         }
@@ -210,7 +210,7 @@ export const useTTS = () => {
         try {
           console.log(`Regenerating audio for sentence ${sentenceIndex + 1}/${sentencesRef.current.length} with speed ${newSpeed}`);
           const audioUrl = await generateAudioForSentence(remainingSentences[i], newVoice, newSpeed);
-          
+
           // Add to queue at the correct position
           audioQueueRef.current[sentenceIndex] = audioUrl;
           console.log(`Regenerated audio ${sentenceIndex} with new speed. Queue length: ${audioQueueRef.current.length}`);
@@ -236,12 +236,12 @@ export const useTTS = () => {
       return;
     }
     isProcessingEndRef.current = true;
-    
+
     // Use a timeout to batch state updates and prevent race conditions
     setTimeout(() => {
       setCurrentAudioIndex(prev => {
         const nextIndex = prev + 1;
-        
+
         // Only proceed if the current audio has actually finished playing
         if (audioRef.current && audioRef.current.currentTime > 0 && audioRef.current.ended) {
           console.log(`Audio ${prev} finished naturally, moving to ${nextIndex}`);
@@ -250,7 +250,7 @@ export const useTTS = () => {
         } else {
           console.log(`Audio ${prev} interrupted, moving to ${nextIndex}`);
         }
-        
+
         // Wait for the next audio to be available if we're ahead of generation
         const waitForNext = () => {
           if (nextIndex < audioQueueRef.current.length && audioQueueRef.current[nextIndex]) {
@@ -265,10 +265,10 @@ export const useTTS = () => {
                 audioRef.current.src = audioQueueRef.current[nextIndex];
                 audioRef.current.currentTime = 0;
                 audioRef.current.load();
-                
+
                 // Wait for the audio to be ready before playing
                 const tryPlay = () => {
-                  if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) { 
+                  if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                     audioRef.current.play().catch(error => {
                       console.error(`Error playing audio ${nextIndex}:`, error);
                       // Don't recursively call handleAudioEnded, just try the next one
@@ -297,13 +297,19 @@ export const useTTS = () => {
             // Clean up all blob URLs
             audioQueueRef.current.forEach(url => URL.revokeObjectURL(url));
             audioQueueRef.current = [];
+
+            // Check if we finished naturally (not aborted) and call auto-advance callback
+            if (!abortControllerRef.current?.signal.aborted && onAutoAdvance) {
+              console.log('Playback finished naturally, calling auto-advance callback');
+              onAutoAdvance();
+            }
           }
         };
-        
+
         waitForNext();
         return nextIndex;
       });
-      
+
       // Reset the processing flag after all operations complete
       setTimeout(() => {
         isProcessingEndRef.current = false;
@@ -346,7 +352,7 @@ export const useTTS = () => {
               audioRef.current.src = audioQueueRef.current[nextIndex];
               audioRef.current.currentTime = 0;
               audioRef.current.load();
-              
+
               const tryPlay = () => {
                 if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                   audioRef.current.play().catch(error => {
@@ -355,7 +361,7 @@ export const useTTS = () => {
                 }
                 isNavigatingRef.current = false;
               };
-              
+
               if (audioRef.current.readyState >= 2) {
                 tryPlay();
               } else {
@@ -390,7 +396,7 @@ export const useTTS = () => {
               audioRef.current.src = audioQueueRef.current[prevIndex];
               audioRef.current.currentTime = 0;
               audioRef.current.load();
-              
+
               const tryPlay = () => {
                 if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                   audioRef.current.play().catch(error => {
@@ -399,7 +405,7 @@ export const useTTS = () => {
                 }
                 isNavigatingRef.current = false;
               };
-              
+
               if (audioRef.current.readyState >= 2) {
                 tryPlay();
               } else {
@@ -437,7 +443,7 @@ export const useTTS = () => {
         // Ignore errors from already revoked URLs
       }
     });
-    
+
     // Reset all state in one batch to minimize re-renders
     audioQueueRef.current = [];
     sentencesRef.current = [];
@@ -497,7 +503,7 @@ export const useTTS = () => {
   useEffect(() => {
     // Capture the current audio element at effect runtime
     const currentAudio = audioRef.current;
-    
+
     return () => {
       // Only cleanup on unmount, use stopSpeaking for other cases
       if (abortControllerRef.current) {
@@ -532,7 +538,7 @@ export const useTTS = () => {
     await regenerateRemainingQueue(currentVoiceRef.current, newSpeed);
   }, [isSpeaking, regenerateRemainingQueue]);
 
-  // Handle voice changes during playback  
+  // Handle voice changes during playback
   const handleVoiceChange = useCallback(async (newVoice) => {
     if (!isSpeaking) {
       // Just update the current voice for next playback
