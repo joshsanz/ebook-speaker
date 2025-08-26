@@ -5,6 +5,7 @@ import { useCleanup } from '../hooks/useCleanup';
 import { useVoices } from '../hooks/useVoices';
 import VoiceSelector from './VoiceSelector.jsx';
 import SpeedSelector from './SpeedSelector.jsx';
+import logger from '../utils/logger';
 import './BookReader.css';
 
 const BookReader = () => {
@@ -42,7 +43,7 @@ const BookReader = () => {
       }
 
       if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
-        console.log('Auto-advancing to next chapter');
+        logger.info('Auto-advancing to next chapter');
         // Set flags for navigation and auto-start
         setShouldAutoAdvance(true);
         setAutoStartTTS(true); // Persistent flag that survives navigation
@@ -181,7 +182,7 @@ const BookReader = () => {
     try {
       await speakText(chapterTextContent, selectedVoice, selectedSpeed);
     } catch (error) {
-      console.error('TTS Error:', error);
+      logger.error('TTS Error:', error);
 
       if (error.name === 'AbortError') {
         alert('Speech generation was cancelled');
@@ -225,14 +226,14 @@ const BookReader = () => {
 
     // If not found, try to find by order number as fallback
     if (index === -1) {
-      console.warn(`Chapter ID ${currentChapter.id} not found in chapters list, trying order fallback`);
+      logger.warn(`Chapter ID ${currentChapter.id} not found in chapters list, trying order fallback`);
       index = chapters.findIndex(ch => ch.order === currentChapter.order);
     }
 
     // If still not found, log warning and return -1
     if (index === -1) {
-      console.error(`Could not find current chapter ${currentChapter.title} (ID: ${currentChapter.id}) in chapters list`);
-      console.log('Available chapters:', chapters.map(ch => `${ch.order}: ${ch.title} (ID: ${ch.id})`));
+      logger.error(`Could not find current chapter ${currentChapter.title} (ID: ${currentChapter.id}) in chapters list`);
+      logger.debug('Available chapters:', chapters.map(ch => `${ch.order}: ${ch.title} (ID: ${ch.id})`));
     }
 
     return index;
@@ -330,7 +331,7 @@ const BookReader = () => {
   // Auto-start TTS when chapter content is loaded and autoStartTTS is true
   useEffect(() => {
     if (autoStartTTS && chapterTextContent && !isSpeaking && !isLoadingAudio && !loading) {
-      console.log('Auto-starting TTS after chapter advance', {
+      logger.info('Auto-starting TTS after chapter advance', {
         autoStartTTS,
         hasContent: !!chapterTextContent,
         isSpeaking,
@@ -340,19 +341,19 @@ const BookReader = () => {
 
       // Add a small delay to ensure cleanup is complete before starting new TTS
       const timer = setTimeout(async () => {
-        console.log('Actually calling speakText for auto-advance...');
+        logger.debug('Actually calling speakText for auto-advance...');
         try {
           await speakText(chapterTextContent, selectedVoice, selectedSpeed);
-          console.log('TTS auto-started successfully');
+          logger.info('TTS auto-started successfully');
         } catch (error) {
-          console.error('Error auto-starting TTS:', error);
+          logger.error('Error auto-starting TTS:', error);
         }
         setAutoStartTTS(false); // Reset the flag
       }, 1000); // 1 second delay to ensure everything is ready
 
       return () => clearTimeout(timer); // Cleanup timer if component unmounts
     } else if (autoStartTTS) {
-      console.log('Auto-start conditions not met:', {
+      logger.debug('Auto-start conditions not met:', {
         autoStartTTS,
         hasContent: !!chapterTextContent,
         isSpeaking,

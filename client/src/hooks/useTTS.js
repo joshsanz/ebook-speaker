@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import logger from '../utils/logger';
 
 export const useTTS = (onAutoAdvance) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -148,17 +149,17 @@ export const useTTS = (onAutoAdvance) => {
               }
 
               try {
-                console.log(`Generating audio for sentence ${i + 1}/${sentences.length}`);
+                logger.debug(`Generating audio for sentence ${i + 1}/${sentences.length}`);
                 const audioUrl = await generateAudioForSentence(sentences[i], voice, speed);
                 audioQueueRef.current.push(audioUrl);
-                console.log(`Added audio ${i} to queue. Queue length: ${audioQueueRef.current.length}`);
+                logger.debug(`Added audio ${i} to queue. Queue length: ${audioQueueRef.current.length}`);
               } catch (error) {
                 // Don't log AbortError as a failure - it's expected when user clicks Stop
                 if (error.name === 'AbortError') {
-                  console.log(`Audio generation cancelled for sentence ${i + 1}`);
+                  logger.info(`Audio generation cancelled for sentence ${i + 1}`);
                   break; // Exit the loop when aborted
                 } else {
-                  console.error(`Failed to generate audio for sentence ${i + 1}:`, error);
+                  logger.error(`Failed to generate audio for sentence ${i + 1}:`, error);
                 }
               }
             }
@@ -208,23 +209,23 @@ export const useTTS = (onAutoAdvance) => {
         }
 
         try {
-          console.log(`Regenerating audio for sentence ${sentenceIndex + 1}/${sentencesRef.current.length} with speed ${newSpeed}`);
+          logger.debug(`Regenerating audio for sentence ${sentenceIndex + 1}/${sentencesRef.current.length} with speed ${newSpeed}`);
           const audioUrl = await generateAudioForSentence(remainingSentences[i], newVoice, newSpeed);
 
           // Add to queue at the correct position
           audioQueueRef.current[sentenceIndex] = audioUrl;
-          console.log(`Regenerated audio ${sentenceIndex} with new speed. Queue length: ${audioQueueRef.current.length}`);
+          logger.debug(`Regenerated audio ${sentenceIndex} with new speed. Queue length: ${audioQueueRef.current.length}`);
         } catch (error) {
           if (error.name === 'AbortError') {
-            console.log(`Audio regeneration cancelled for sentence ${sentenceIndex + 1}`);
+            logger.info(`Audio regeneration cancelled for sentence ${sentenceIndex + 1}`);
             break;
           } else {
-            console.error(`Failed to regenerate audio for sentence ${sentenceIndex + 1}:`, error);
+            logger.error(`Failed to regenerate audio for sentence ${sentenceIndex + 1}:`, error);
           }
         }
       }
     } catch (error) {
-      console.error('Error regenerating audio queue:', error);
+      logger.error('Error regenerating audio queue:', error);
     }
   }, [currentAudioIndex, isSpeaking, generateAudioForSentence]);
 
@@ -232,7 +233,7 @@ export const useTTS = (onAutoAdvance) => {
   const handleAudioEnded = useCallback(() => {
     // Prevent multiple simultaneous calls or conflicts with navigation
     if (isProcessingEndRef.current || isNavigatingRef.current) {
-      console.log('handleAudioEnded already processing or navigating, ignoring duplicate call');
+      logger.debug('handleAudioEnded already processing or navigating, ignoring duplicate call');
       return;
     }
     isProcessingEndRef.current = true;
@@ -244,11 +245,11 @@ export const useTTS = (onAutoAdvance) => {
 
         // Only proceed if the current audio has actually finished playing
         if (audioRef.current && audioRef.current.currentTime > 0 && audioRef.current.ended) {
-          console.log(`Audio ${prev} finished naturally, moving to ${nextIndex}`);
+          logger.debug(`Audio ${prev} finished naturally, moving to ${nextIndex}`);
         } else if (audioRef.current && audioRef.current.currentTime === 0) {
-          console.log(`Audio ${prev} ended without playing, moving to ${nextIndex}`);
+          logger.debug(`Audio ${prev} ended without playing, moving to ${nextIndex}`);
         } else {
-          console.log(`Audio ${prev} interrupted, moving to ${nextIndex}`);
+          logger.debug(`Audio ${prev} interrupted, moving to ${nextIndex}`);
         }
 
         // Wait for the next audio to be available if we're ahead of generation
@@ -257,7 +258,7 @@ export const useTTS = (onAutoAdvance) => {
             // Next audio is ready, play it
             setTimeout(() => {
               if (audioRef.current && audioQueueRef.current[nextIndex] && !isNavigatingRef.current) {
-                console.log(`Loading audio ${nextIndex}`);
+                logger.debug(`Loading audio ${nextIndex}`);
                 // Only pause if the audio is actually playing
                 if (audioRef.current.readyState > 0 && !audioRef.current.paused) {
                   audioRef.current.pause();
@@ -270,7 +271,7 @@ export const useTTS = (onAutoAdvance) => {
                 const tryPlay = () => {
                   if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                     audioRef.current.play().catch(error => {
-                      console.error(`Error playing audio ${nextIndex}:`, error);
+                      logger.error(`Error playing audio ${nextIndex}:`, error);
                       // Don't recursively call handleAudioEnded, just try the next one
                       if (nextIndex + 1 < audioQueueRef.current.length) {
                         setCurrentAudioIndex(nextIndex + 1);
@@ -287,11 +288,11 @@ export const useTTS = (onAutoAdvance) => {
             }, 100);
           } else if (nextIndex < totalAudioCount && !abortControllerRef.current?.signal.aborted) {
             // Next audio is still being generated, wait for it
-            console.log(`Waiting for audio ${nextIndex} to be generated...`);
+            logger.debug(`Waiting for audio ${nextIndex} to be generated...`);
             setTimeout(waitForNext, 100);
           } else {
             // We've reached the end or been aborted
-            console.log(`Playbook finished. Reached index ${nextIndex} of ${totalAudioCount}`);
+            logger.info(`Playback finished. Reached index ${nextIndex} of ${totalAudioCount}`);
             setIsSpeaking(false);
             setTotalAudioCount(0);
             // Clean up all blob URLs
@@ -300,7 +301,7 @@ export const useTTS = (onAutoAdvance) => {
 
             // Check if we finished naturally (not aborted) and call auto-advance callback
             if (!abortControllerRef.current?.signal.aborted && onAutoAdvance) {
-              console.log('Playback finished naturally, calling auto-advance callback');
+              logger.info('Playback finished naturally, calling auto-advance callback');
               onAutoAdvance();
             }
           }
@@ -329,7 +330,7 @@ export const useTTS = (onAutoAdvance) => {
   const resumeSpeaking = useCallback(() => {
     if (audioRef.current && isSpeaking && isPaused) {
       audioRef.current.play().catch(error => {
-        console.error('Error resuming audio:', error);
+        logger.error('Error resuming audio:', error);
       });
       setIsPaused(false);
     }
@@ -356,7 +357,7 @@ export const useTTS = (onAutoAdvance) => {
               const tryPlay = () => {
                 if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                   audioRef.current.play().catch(error => {
-                    console.error('Error fast-forwarding:', error);
+                    logger.error('Error fast-forwarding:', error);
                   });
                 }
                 isNavigatingRef.current = false;
@@ -400,7 +401,7 @@ export const useTTS = (onAutoAdvance) => {
               const tryPlay = () => {
                 if (audioRef.current && audioRef.current.readyState >= 2 && !isPaused) {
                   audioRef.current.play().catch(error => {
-                    console.error('Error rewinding:', error);
+                    logger.error('Error rewinding:', error);
                   });
                 }
                 isNavigatingRef.current = false;

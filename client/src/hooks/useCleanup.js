@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import logger from '../utils/logger';
 
 export const useCleanup = () => {
   const cleanupFunctionsRef = useRef([]);
@@ -19,7 +20,7 @@ export const useCleanup = () => {
       try {
         cleanupFn();
       } catch (error) {
-        console.error('Error during cleanup:', error);
+        logger.error('Error during cleanup:', error);
       }
     });
     cleanupFunctionsRef.current = [];

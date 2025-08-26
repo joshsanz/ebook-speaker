@@ -3,7 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const multer = require('multer');
+const log = require('loglevel');
 const EpubReader = require('./epub-reader');
+const apicache = require('apicache');
+
+// Set default log level to INFO to reduce noise, can be changed via log.setLevel()
+log.setLevel('INFO');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -23,9 +28,27 @@ app.get('/health', (req, res) => {
 // Store active EPUB readers
 const epubReaders = new Map();
 
+// Configure apicache for TTS responses
+const cache = apicache.middleware;
+
+// TTS Cache configuration
+const TTS_CACHE_DURATION = '15 minutes';
+
+// Cache configuration for TTS endpoint - only cache successful responses
+const ttsCacheOptions = {
+    duration: TTS_CACHE_DURATION,
+    statusCodes: {
+        include: [200] // Only cache successful responses
+    },
+    headers: {
+        'X-TTS-Cache': 'HIT'
+    }
+};
+
 // Multer configuration for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
+
 
 // Get list of EPUB files with metadata
 app.get('/api/books', async (req, res) => {
@@ -56,7 +79,7 @@ app.get('/api/books', async (req, res) => {
         await readDirectory(dataDir);
         res.json(epubFiles);
     } catch (error) {
-        console.error('Error reading data directory:', error);
+        log.error('Error reading data directory:', error);
         res.status(500).json({ error: 'Failed to read books directory' });
     }
 });
@@ -73,9 +96,9 @@ app.post('/api/books', upload.single('file'), async (req, res) => {
         await reader.initialize();
         await reader.improveChapterTitles();
         const metadata = reader.getMetadata();
-        
+
         const author = metadata.creator || 'Unknown';
-        
+
         // Parse author name for Last_First_Middle format
         let authorDir = 'Unknown';
         if (author !== 'Unknown') {
@@ -109,7 +132,7 @@ app.post('/api/books', upload.single('file'), async (req, res) => {
 
         res.status(201).json({ message: 'File uploaded successfully' });
     } catch (error) {
-        console.error('Error uploading file:', error);
+        log.error('Error uploading file:', error);
         res.status(500).json({ error: 'Failed to upload file' });
     }
 });
@@ -119,34 +142,34 @@ app.delete('/api/books/:filename', (req, res) => {
     try {
         const filename = decodeURIComponent(req.params.filename);
         const filePath = path.join(__dirname, 'data', filename);
-        
+
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
             epubReaders.delete(filename);
-            
+
             // Check if the parent directory is now empty and delete it if so
             const parentDir = path.dirname(filePath);
             const dataDir = path.join(__dirname, 'data');
-            
+
             // Only delete if it's a subdirectory of data/ (not data/ itself)
             if (parentDir !== dataDir) {
                 try {
                     const files = fs.readdirSync(parentDir);
                     if (files.length === 0) {
                         fs.rmdirSync(parentDir);
-                        console.log(`Deleted empty directory: ${path.basename(parentDir)}`);
+                        log.info(`Deleted empty directory: ${path.basename(parentDir)}`);
                     }
                 } catch (dirError) {
-                    console.warn('Could not check/delete directory:', dirError.message);
+                    log.warn('Could not check/delete directory:', dirError.message);
                 }
             }
-            
+
             res.status(200).json({ message: 'File deleted successfully' });
         } else {
             res.status(404).json({ error: 'File not found' });
         }
     } catch (error) {
-        console.error('Error deleting file:', error);
+        log.error('Error deleting file:', error);
         res.status(500).json({ error: 'Failed to delete file' });
     }
 });
@@ -165,7 +188,7 @@ async function getEpubReader(filePath) {
         epubReaders.set(filePath, reader);
         return reader;
     } catch (error) {
-        console.error(`Failed to initialize EPUB reader for ${filePath}:`, error);
+        log.error(`Failed to initialize EPUB reader for ${filePath}:`, error);
         throw error;
     }
 }
@@ -212,7 +235,7 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
 
         const rawContent = await reader.getChapterContent(chapterId);
         const cleanTextContent = reader.cleanHtmlContent(rawContent);
-        
+
         // Process hyperlinks for React routing by passing the book filename
         const htmlContent = reader.getRawHtmlContent(rawContent, filename);
 
@@ -244,13 +267,13 @@ app.get('/api/tts/voices', async (req, res) => {
         const voices = await ttsResponse.json();
         res.json(voices);
     } catch (error) {
-        console.error('Error fetching voices:', error);
+        log.error('Error fetching voices:', error);
         res.status(500).json({ error: 'Failed to fetch voices from TTS service' });
     }
 });
 
-// Proxy endpoint for TTS requests
-app.post('/api/tts/speech', async (req, res) => {
+// Proxy endpoint for TTS requests with caching
+app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
     try {
         const { model, input, voice, response_format, speed } = req.body;
 
@@ -285,18 +308,41 @@ app.post('/api/tts/speech', async (req, res) => {
         // Set appropriate headers
         res.set({
             'Content-Type': 'audio/wav',
-            'Content-Disposition': 'attachment; filename="speech.wav"'
+            'Content-Disposition': 'attachment; filename="speech.wav"',
+            'X-TTS-Cache': res.get('X-TTS-Cache') || 'MISS'
         });
 
         // Stream the audio response
         ttsResponse.body.pipe(res);
 
     } catch (error) {
-        console.error('TTS proxy error:', error);
+        log.error('TTS proxy error:', error);
         res.status(500).json({
             error: 'TTS service unavailable',
             message: error.message
         });
+    }
+});
+
+// TTS Cache management endpoints
+app.get('/api/tts/cache/stats', (req, res) => {
+    try {
+        const stats = apicache.getPerformance();
+        res.json(stats);
+    } catch (error) {
+        log.error('Error getting cache stats:', error);
+        res.status(500).json({ error: 'Failed to get cache statistics' });
+    }
+});
+
+// Clear TTS cache
+app.delete('/api/tts/cache', (req, res) => {
+    try {
+        apicache.clear();
+        res.json({ message: 'TTS cache cleared successfully' });
+    } catch (error) {
+        log.error('Error clearing cache:', error);
+        res.status(500).json({ error: 'Failed to clear cache' });
     }
 });
 
@@ -307,15 +353,16 @@ app.get('*', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`EPUB Speaker server running on http://localhost:${PORT}`);
-    console.log('Available EPUB files in data directory:');
+    log.info(`EPUB Speaker server running on http://localhost:${PORT}`);
+    log.info(`TTS Cache enabled with ${TTS_CACHE_DURATION} timeout (apicache)`);
+    log.info('Available EPUB files in data directory:');
     try {
         const dataDir = path.join(__dirname, 'data');
         const files = fs.readdirSync(dataDir);
         const epubFiles = files.filter(file => file.toLowerCase().endsWith('.epub'));
-        epubFiles.forEach(file => console.log(`  - ${file}`));
+        epubFiles.forEach(file => log.info(`  - ${file}`));
     } catch (error) {
-        console.error('Error reading data directory:', error);
+        log.error('Error reading data directory:', error);
     }
 });
 

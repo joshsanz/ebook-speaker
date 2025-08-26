@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import logger from '../utils/logger';
 
 export const useVoices = () => {
   const [voices, setVoices] = useState([]);
@@ -78,9 +79,10 @@ export const useVoices = () => {
       setVoices(voicesData);
     } catch (err) {
       setError(err.message);
-      console.error('Error fetching voices:', err);
+      logger.error('Error fetching voices:', err);
       
       // Fallback to hardcoded voices if API fails
+      logger.warn('Using fallback voices due to API error');
       setVoices([
         { name: 'af_heart', language: 'en', gender: 'female', description: 'American Female Heart' },
         { name: 'am_adam', language: 'en', gender: 'male', description: 'American Male Adam' },
