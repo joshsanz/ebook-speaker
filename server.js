@@ -170,6 +170,27 @@ const upload = multer({ storage: storage });
 // Configure apicache for TTS responses
 const cache = apicache.middleware;
 
+// Configure apicache with custom key generation for TTS requests
+apicache.options({
+    appendKey: (req, res) => {
+        // Only customize cache key for TTS requests
+        if (req.url === '/api/tts/speech' && req.method === 'POST') {
+            const { model, input, voice, response_format, speed } = req.body;
+            const keyData = {
+                model: model || 'kokoro',
+                input: input || '',
+                voice: voice || '',
+                response_format: response_format || 'wav',
+                speed: speed || 1.0
+            };
+            return JSON.stringify(keyData);
+        }
+        
+        // For all other requests, no additional key
+        return '';
+    }
+});
+
 // Store active EPUB readers
 const epubReaders = new Map();
 
