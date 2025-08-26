@@ -1,14 +1,14 @@
 import React from 'react';
 import './SpeedSelector.css';
 
-const SpeedSelector = ({ 
-  selectedSpeed = 1.0, 
-  onSpeedChange, 
-  disabled = false 
+const SpeedSelector = ({
+  selectedSpeed = 1.0,
+  onSpeedChange,
+  disabled = false
 }) => {
   // Generate speed options from 0.5 to 2.0 in 0.1 increments
   const speedOptions = [];
-  for (let speed = 0.5; speed <= 2.0; speed += 0.1) {
+  for (let speed = 0.5; speed <= 2.01; speed += 0.1) {
     const roundedSpeed = Math.round(speed * 10) / 10; // Fix floating point precision
     speedOptions.push(roundedSpeed);
   }
