@@ -10,7 +10,7 @@ services:
       - PORT=3001
       - TTS_SERVICE_URL=http://tts-service:5005
     volumes:
-      - ./data:/app/data:ro
+      - ./data:/app/data
       - ./client/build:/app/client/build:ro
     depends_on:
       tts-service:
