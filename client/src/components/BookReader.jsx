@@ -10,6 +10,7 @@ import { useAutoAdvance } from '../hooks/useAutoAdvance';
 import FloatingControls from './FloatingControls.jsx';
 import ChapterNavigation from './ChapterNavigation.jsx';
 import TableOfContents from './TableOfContents.jsx';
+import ScrollToTopButton from './ScrollToTopButton.jsx';
 import { ErrorDisplay, LoadingDisplay } from './ErrorBoundary.jsx';
 import { STORAGE_KEYS, DEFAULT_VALUES, ERROR_MESSAGES } from '../constants/bookReader';
 import logger from '../utils/logger';
@@ -146,7 +147,11 @@ const BookReader = () => {
   // Fetch chapter content when chapterId changes
   useEffect(() => {
     if (chapterId && chapters.length > 0) {
-      fetchChapterContent(chapterId).then(() => setIsReading(true));
+      fetchChapterContent(chapterId).then(() => {
+        setIsReading(true);
+        // Scroll to top when chapter content loads
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     }
   }, [chapterId, chapters, fetchChapterContent]);
 
@@ -281,6 +286,9 @@ const BookReader = () => {
           style={{ display: 'none' }}
           preload="none"
         />
+
+        {/* Scroll to top button */}
+        <ScrollToTopButton />
       </div>
     );
   }
