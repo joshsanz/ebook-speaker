@@ -4,13 +4,13 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3001:3001"
+      - "0.0.0.0:3001:3001"
     environment:
       - NODE_ENV=production
       - PORT=3001
       - TTS_SERVICE_URL=http://tts-service:5005
     volumes:
-      - ./data:/app/data
+      - ebook-data:/app/data
       - ./client/build:/app/client/build:ro
     depends_on:
       tts-service:
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     # Add graceful shutdown configuration
     stop_signal: SIGTERM
-    stop_grace_period: 30s
+    stop_grace_period: 10s
 
   client-build:
     image: node:20-slim
@@ -43,9 +43,12 @@ services:
       context: ./tts
       dockerfile: Dockerfile
     ports:
-      - "5005:5005"
+      - "0.0.0.0:5005:5005"
     environment:
       - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount TTS model files to avoid downloads
+      - tts-models:/app/models
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s
@@ -57,7 +60,7 @@ services:
       - ebook-speaker
     # Add graceful shutdown configuration
     stop_signal: SIGTERM
-    stop_grace_period: 45s
+    stop_grace_period: 15s
     deploy:
       resources:
         limits:
@@ -72,5 +75,7 @@ networks:
     driver: bridge
 
 volumes:
-  data:
+  ebook-data:
+    driver: local
+  tts-models:
     driver: local

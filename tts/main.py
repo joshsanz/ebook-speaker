@@ -26,6 +26,15 @@ def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"🔴 Received signal {signum}, initiating graceful shutdown...")
     shutdown_event.set()
+    # Exit after a short delay to allow current requests to complete
+    import threading
+    def delayed_exit():
+        import time
+        time.sleep(2)  # Wait 2 seconds for current requests
+        print("🔴 Forcing exit...")
+        os._exit(0)
+    
+    threading.Thread(target=delayed_exit, daemon=True).start()
 
 
 def setup_signal_handlers():
@@ -57,35 +66,87 @@ def download_file_if_missing(url: str, filename: str) -> bool:
         return False
 
 
-def ensure_model_files():
-    """Ensure all required model files are present"""
+def find_model_files():
+    """Find model files, checking mounted directory first, then current directory, then download"""
     print("🔍 Checking for required model files...")
-    # Use fp16 model for faster inference. Supposedly there is no perceptible difference in 
-    # generated audio.
-    # The int8 model (~80MB) may be useful for a client-side inference project
-    model_name = "kokoro-v1.0.fp16.onnx"
-    voice_name = "voices-v1.0.bin"
-    files_to_download = [
-        {
-            "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{voice_name}",
-            "filename": voice_name
-        },
-        {
-            "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{model_name}",
-            "filename": model_name
-        }
-    ]
-
-    all_files_present = True
-    for file_info in files_to_download:
-        if not download_file_if_missing(file_info["url"], file_info["filename"]):
-            all_files_present = False
-
-    if not all_files_present:
-        raise Exception("Failed to download required model files")
-
+    
+    # Model file patterns
+    model_patterns = ["kokoro-v1.0.fp16.onnx", "kokoro-v1.0.onnx", "kokoro.onnx"]
+    voice_patterns = ["voices-v1.0.bin", "voices.bin"]
+    
+    model_name = None
+    voice_name = None
+    
+    # Check mounted models directory first
+    mounted_dir = "/app/models"
+    if os.path.exists(mounted_dir):
+        print("📁 Checking mounted models directory...")
+        mounted_files = os.listdir(mounted_dir)
+        
+        # Look for model files
+        for pattern in model_patterns:
+            if pattern in mounted_files:
+                model_path = os.path.join(mounted_dir, pattern)
+                print(f"✓ Found mounted model: {pattern}")
+                model_name = model_path
+                break
+        
+        # Look for voice files
+        for pattern in voice_patterns:
+            if pattern in mounted_files:
+                voice_path = os.path.join(mounted_dir, pattern)
+                print(f"✓ Found mounted voices: {pattern}")
+                voice_name = voice_path
+                break
+    
+    # Check current directory if not found in mounted dir
+    if not model_name:
+        for pattern in model_patterns:
+            if os.path.exists(pattern):
+                print(f"✓ Found local model: {pattern}")
+                model_name = pattern
+                break
+    
+    if not voice_name:
+        for pattern in voice_patterns:
+            if os.path.exists(pattern):
+                print(f"✓ Found local voices: {pattern}")
+                voice_name = pattern
+                break
+    
+    # Download if still not found
+    if not model_name or not voice_name:
+        print("📥 Model files not found locally, downloading...")
+        default_model = "kokoro-v1.0.fp16.onnx"
+        default_voices = "voices-v1.0.bin"
+        
+        files_to_download = []
+        if not model_name:
+            files_to_download.append({
+                "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_model}",
+                "filename": default_model
+            })
+            model_name = default_model
+        
+        if not voice_name:
+            files_to_download.append({
+                "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_voices}",
+                "filename": default_voices
+            })
+            voice_name = default_voices
+        
+        all_files_present = True
+        for file_info in files_to_download:
+            if not download_file_if_missing(file_info["url"], file_info["filename"]):
+                all_files_present = False
+        
+        if not all_files_present:
+            raise Exception("Failed to download required model files")
+    
     print("✅ All model files are ready")
-
+    print(f"🎵 Using model: {model_name}")
+    print(f"🗣️ Using voices: {voice_name}")
+    
     return model_name, voice_name
 
 
@@ -98,8 +159,8 @@ async def lifespan(app: FastAPI):
     setup_signal_handlers()
     
     try:
-        # Ensure model files are present
-        model, voices = ensure_model_files()
+        # Find model files (mounted, local, or download)
+        model, voices = find_model_files()
 
         # Create ONNX session to select an accelerator (CoreML/CUDA) if available
         providers = ort.get_available_providers()
@@ -128,6 +189,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("🔄 Shutting down TTS service")
+    shutdown_event.set()
+    
+    # Give a moment for any ongoing requests to complete
+    await asyncio.sleep(1)
+    print("✅ TTS service shutdown complete")
 
 
 app = FastAPI(
@@ -146,6 +212,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Add shutdown check middleware
+@app.middleware("http")
+async def shutdown_middleware(request, call_next):
+    """Check if service is shutting down before processing requests"""
+    if shutdown_event.is_set():
+        raise HTTPException(
+            status_code=503,
+            detail="Service is shutting down"
+        )
+    response = await call_next(request)
+    return response
 
 
 class SpeechRequest(BaseModel):
@@ -447,9 +526,14 @@ async def root():
 
 
 if __name__ == "__main__":
+    # Setup signal handlers before starting uvicorn
+    setup_signal_handlers()
+    
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=5005,
-        reload=True
+        reload=False,  # Disable reload for production
+        access_log=False,  # Reduce logging overhead
+        log_level="info"
     )
