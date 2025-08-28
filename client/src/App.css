@@ -1,3 +1,49 @@
+:root {
+  /* Light mode colors */
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f8f9fa;
+  --text-primary: #333333;
+  --text-secondary: #666666;
+  --text-accent: #2196f3;
+  --border-primary: #e0e0e0;
+  --border-secondary: #cccccc;
+  --header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --header-text: #ffffff;
+  --button-primary: #2196f3;
+  --button-primary-hover: #1976d2;
+  --button-secondary: #f0f0f0;
+  --button-secondary-hover: #e0e0e0;
+  --shadow: rgba(0, 0, 0, 0.1);
+  --shadow-hover: rgba(33, 150, 243, 0.2);
+  --error-bg: #ffebee;
+  --error-border: #ffcdd2;
+  --error-text: #d32f2f;
+}
+
+/* Dark mode colors */
+.dark-mode {
+  --bg-primary: #121212;
+  --bg-secondary: #1e1e1e;
+  --bg-tertiary: #2a2a2a;
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --text-accent: #64b5f6;
+  --border-primary: #404040;
+  --border-secondary: #555555;
+  --header-bg: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+  --header-text: #ffffff;
+  --button-primary: #64b5f6;
+  --button-primary-hover: #42a5f5;
+  --button-secondary: #333333;
+  --button-secondary-hover: #444444;
+  --shadow: rgba(0, 0, 0, 0.3);
+  --shadow-hover: rgba(100, 181, 246, 0.3);
+  --error-bg: #2a1a1a;
+  --error-border: #5c2b2b;
+  --error-text: #ff8a80;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -9,20 +55,25 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 .App {
   min-height: 100vh;
-  background-color: #f5f5f5;
+  background-color: var(--bg-primary);
 }
 
 .App-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--header-bg);
   padding: 1.5rem 2rem;
-  color: white;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  color: var(--header-text);
+  box-shadow: 0 2px 10px var(--shadow);
   margin-bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .App-header h1 {
@@ -35,7 +86,7 @@ body {
 
 .header-title-link {
   text-decoration: none;
-  color: white;
+  color: var(--header-text);
   display: block;
   transition: opacity 0.3s ease;
 }
@@ -57,11 +108,13 @@ button {
 
 /* Global link styles */
 a {
-  color: #2196f3;
+  color: var(--text-accent);
   text-decoration: none;
+  transition: color 0.3s ease;
 }
 
 a:hover {
+  color: var(--button-primary-hover);
   text-decoration: underline;
 }
 
@@ -72,13 +125,13 @@ a:hover {
   justify-content: center;
   min-height: 200px;
   font-size: 1.2rem;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .error {
-  color: #d32f2f;
-  background-color: #ffebee;
-  border: 1px solid #ffcdd2;
+  color: var(--error-text);
+  background-color: var(--error-bg);
+  border: 1px solid var(--error-border);
   border-radius: 8px;
   padding: 1rem;
   margin: 1rem 0;
