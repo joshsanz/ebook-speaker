@@ -503,6 +503,40 @@
   margin: 0 auto;
 }
 
+/* Sentence Highlighting */
+.sentence-highlight {
+  background-color: #fff3cd;
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 0 8px rgba(255, 193, 7, 0.3);
+  position: relative;
+  z-index: 1;
+}
+
+.sentence-highlight:before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -4px;
+  right: -4px;
+  bottom: -2px;
+  background: linear-gradient(45deg, rgba(255, 193, 7, 0.1), rgba(255, 193, 7, 0.2));
+  border-radius: 3px;
+  z-index: -1;
+  animation: highlight-pulse 2s ease-in-out infinite;
+}
+
+@keyframes highlight-pulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
 /* Hyperlink styling */
 .chapter-content a {
   color: #2196f3;

@@ -311,6 +311,49 @@ app.get('/api/books/:filename/chapters', async (req, res) => {
 });
 
 /**
+ * Wraps sentences in HTML content with sentence index spans
+ * @param {string} htmlContent - HTML content to process
+ * @param {string} cleanText - Clean text version for sentence splitting
+ * @returns {string} HTML with sentence spans
+ */
+function addSentenceSpans(htmlContent, cleanText) {
+    // Split clean text into sentences using same logic as frontend
+    const sentences = cleanText
+        .split(/[.!?]+/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+    
+    if (sentences.length === 0) return htmlContent;
+    
+    let processedHtml = htmlContent;
+    let sentenceIndex = 0;
+    
+    sentences.forEach((sentence, index) => {
+        if (sentence.length === 0) return;
+        
+        // Escape special regex characters in the sentence
+        const escapedSentence = sentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Create a flexible regex that matches the sentence with possible HTML tags in between
+        const sentencePattern = new RegExp(
+            escapedSentence.split(/\s+/).map(word => 
+                word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            ).join('(?:<[^>]*>)*\\s*(?:<[^>]*>)*'),
+            'i'
+        );
+        
+        // Find and wrap the sentence
+        processedHtml = processedHtml.replace(sentencePattern, (match) => {
+            return `<span data-sentence-index="${sentenceIndex}">${match}</span>`;
+        });
+        
+        sentenceIndex++;
+    });
+    
+    return processedHtml;
+}
+
+/**
  * Get specific chapter content
  */
 app.get('/api/books/:filename/chapters/:id', async (req, res) => {
@@ -324,11 +367,14 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
         const cleanTextContent = reader.cleanHtmlContent(rawContent);
 
         // Process hyperlinks for React routing by passing the book filename
-        const htmlContent = reader.getRawHtmlContent(rawContent, filename);
+        let htmlContent = reader.getRawHtmlContent(rawContent, filename);
+        
+        // Add sentence mapping spans for highlighting
+        htmlContent = addSentenceSpans(htmlContent, cleanTextContent);
 
         res.json({
             id: chapterId,
-            content: htmlContent,  // HTML content for web display with processed hyperlinks
+            content: htmlContent,  // HTML content with sentence spans for highlighting
             textContent: cleanTextContent,  // Clean text for speech synthesis
             rawContent: rawContent  // Original HTML content
         });

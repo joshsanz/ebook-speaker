@@ -7,6 +7,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useBookData } from '../hooks/useBookData';
 import { useChapterNavigation } from '../hooks/useChapterNavigation';
 import { useAutoAdvance } from '../hooks/useAutoAdvance';
+import { useSentenceHighlighting } from '../hooks/useSentenceHighlighting';
 import FloatingControls from './FloatingControls.jsx';
 import ChapterNavigation from './ChapterNavigation.jsx';
 import TableOfContents from './TableOfContents.jsx';
@@ -63,6 +64,9 @@ const BookReader = () => {
     voices, groupedVoices, loading: voicesLoading, 
     error: voicesError, getDefaultVoice
   } = useVoices();
+
+  // Sentence highlighting hook
+  const { highlightSentence, clearHighlight, clearAllHighlights } = useSentenceHighlighting();
 
   /**
    * Handles speak/pause button clicks
@@ -189,8 +193,20 @@ const BookReader = () => {
   // Add TTS cleanup to cleanup manager
   useEffect(() => {
     addCleanup(stopSpeaking);
+    addCleanup(clearAllHighlights);
     return executeCleanup;
-  }, [addCleanup, stopSpeaking, executeCleanup]);
+  }, [addCleanup, stopSpeaking, executeCleanup, clearAllHighlights]);
+
+  // Sync sentence highlighting with TTS playback
+  useEffect(() => {
+    if (isSpeaking && currentAudioIndex >= 0) {
+      highlightSentence(currentAudioIndex);
+    } else if (!isSpeaking) {
+      // Only clear highlight when TTS is completely stopped, not when paused
+      clearHighlight();
+    }
+    // If paused (isSpeaking=true, isPaused=true), keep the current highlight
+  }, [currentAudioIndex, isSpeaking, highlightSentence, clearHighlight]);
 
 
   if (loading) {
