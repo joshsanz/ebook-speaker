@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import { useCleanup } from '../hooks/useCleanup';
@@ -14,6 +14,7 @@ import TableOfContents from './TableOfContents.jsx';
 import ScrollToTopButton from './ScrollToTopButton.jsx';
 import { ErrorDisplay, LoadingDisplay } from './ErrorBoundary.jsx';
 import { STORAGE_KEYS, DEFAULT_VALUES, ERROR_MESSAGES } from '../constants/bookReader';
+import { sanitizeForDisplay, isContentSafe } from '../utils/htmlSanitizer';
 import logger from '../utils/logger';
 import './BookReader.css';
 
@@ -67,6 +68,19 @@ const BookReader = () => {
 
   // Sentence highlighting hook
   const { highlightSentence, clearHighlight, clearAllHighlights } = useSentenceHighlighting();
+
+  // SECURITY: Sanitize chapter content to prevent XSS attacks
+  const sanitizedChapterContent = useMemo(() => {
+    if (!chapterContent) return '';
+    
+    // Check if content appears to be already safe
+    if (!isContentSafe(chapterContent)) {
+      logger.warn('Unsafe HTML content detected in chapter, applying client-side sanitization');
+    }
+    
+    // Apply client-side sanitization as defense-in-depth
+    return sanitizeForDisplay(chapterContent);
+  }, [chapterContent]);
 
   /**
    * Handles speak/pause button clicks
@@ -274,7 +288,7 @@ const BookReader = () => {
         />
 
         <div className="chapter-content" onClick={handleInternalLinkClick}>
-          <div dangerouslySetInnerHTML={{ __html: chapterContent }} />
+          <div dangerouslySetInnerHTML={{ __html: sanitizedChapterContent }} />
         </div>
 
         <ChapterNavigation

@@ -17,6 +17,7 @@ const log = require('loglevel');
 const EpubReader = require('./epub-reader');
 const apicache = require('apicache');
 const { validateFilename, createSecurePath, validateFileAccess } = require('./utils/security');
+const { sanitizeEpubHtml, analyzeHtmlSecurity } = require('./utils/htmlSanitizer');
 
 // =============================================================================
 // CONFIGURATION
@@ -430,12 +431,26 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
         
         // Add sentence mapping spans for highlighting
         htmlContent = addSentenceSpans(htmlContent, cleanTextContent);
+        
+        // SECURITY: Sanitize HTML content to prevent XSS attacks
+        const securityAnalysis = analyzeHtmlSecurity(htmlContent);
+        if (!securityAnalysis.safe) {
+            log.warn('Potentially unsafe HTML content detected in EPUB:', {
+                book: filename,
+                chapter: chapterId,
+                warnings: securityAnalysis.warnings.map(w => `${w.type} (${w.count})`),
+                riskLevel: securityAnalysis.riskLevel
+            });
+        }
+        
+        // Sanitize the HTML content before sending to client
+        const sanitizedHtmlContent = sanitizeEpubHtml(htmlContent);
 
         res.json({
             id: chapterId,
-            content: htmlContent,  // HTML content with sentence spans for highlighting
+            content: sanitizedHtmlContent,  // SANITIZED HTML content safe for display
             textContent: cleanTextContent,  // Clean text for speech synthesis
-            rawContent: rawContent  // Original HTML content
+            rawContent: rawContent  // Original HTML content (for debugging only)
         });
     } catch (error) {
         // Handle security violations
