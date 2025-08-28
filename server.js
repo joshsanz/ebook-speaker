@@ -16,6 +16,7 @@ const multer = require('multer');
 const log = require('loglevel');
 const EpubReader = require('./epub-reader');
 const apicache = require('apicache');
+const { validateFilename, createSecurePath, validateFileAccess } = require('./utils/security');
 
 // =============================================================================
 // CONFIGURATION
@@ -251,8 +252,14 @@ app.post('/api/books', upload.single('file'), async (req, res) => {
  */
 app.delete('/api/books/:filename', (req, res) => {
     try {
-        const filename = decodeURIComponent(req.params.filename);
-        const filePath = path.join(DATA_DIR, filename);
+        // Validate filename to prevent path traversal attacks
+        const filename = validateFilename(req.params.filename, DATA_DIR);
+        const filePath = createSecurePath(DATA_DIR, filename);
+
+        // Double-check file access is safe
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'File not found' });
+        }
 
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
@@ -267,6 +274,17 @@ app.delete('/api/books/:filename', (req, res) => {
             res.status(404).json({ error: 'File not found' });
         }
     } catch (error) {
+        // Log security-relevant errors
+        if (error.message.includes('traversal') || error.message.includes('injection')) {
+            log.warn('Security violation attempt:', {
+                ip: req.ip,
+                userAgent: req.get('User-Agent'),
+                filename: req.params.filename,
+                error: error.message
+            });
+            return res.status(400).json({ error: 'Invalid filename' });
+        }
+        
         log.error('Error deleting file:', error);
         res.status(500).json({ error: 'Failed to delete file' });
     }
@@ -279,15 +297,32 @@ app.delete('/api/books/:filename', (req, res) => {
  */
 app.get('/api/books/:filename/metadata', async (req, res) => {
     try {
-        const filename = decodeURIComponent(req.params.filename);
-        const filePath = path.join(DATA_DIR, filename);
+        // Validate filename to prevent path traversal attacks
+        const filename = validateFilename(req.params.filename, DATA_DIR);
+        const filePath = createSecurePath(DATA_DIR, filename);
+        
+        // Verify file access is safe
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'Book not found' });
+        }
+        
         const reader = await getEpubReader(filePath);
         const metadata = reader.getMetadata();
         res.json(metadata);
     } catch (error) {
+        // Handle security violations
+        if (error.message.includes('traversal') || error.message.includes('injection')) {
+            log.warn('Security violation attempt:', {
+                ip: req.ip,
+                userAgent: req.get('User-Agent'),
+                filename: req.params.filename,
+                error: error.message
+            });
+            return res.status(400).json({ error: 'Invalid filename' });
+        }
+        
         res.status(500).json({
-            error: 'Failed to get book metadata',
-            message: error.message
+            error: 'Failed to get book metadata'
         });
     }
 });
@@ -297,15 +332,32 @@ app.get('/api/books/:filename/metadata', async (req, res) => {
  */
 app.get('/api/books/:filename/chapters', async (req, res) => {
     try {
-        const filename = decodeURIComponent(req.params.filename);
-        const filePath = path.join(DATA_DIR, filename);
+        // Validate filename to prevent path traversal attacks
+        const filename = validateFilename(req.params.filename, DATA_DIR);
+        const filePath = createSecurePath(DATA_DIR, filename);
+        
+        // Verify file access is safe
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'Book not found' });
+        }
+        
         const reader = await getEpubReader(filePath);
         const chapters = reader.getChapterList();
         res.json(chapters);
     } catch (error) {
+        // Handle security violations
+        if (error.message.includes('traversal') || error.message.includes('injection')) {
+            log.warn('Security violation attempt:', {
+                ip: req.ip,
+                userAgent: req.get('User-Agent'),
+                filename: req.params.filename,
+                error: error.message
+            });
+            return res.status(400).json({ error: 'Invalid filename' });
+        }
+        
         res.status(500).json({
-            error: 'Failed to get chapters',
-            message: error.message
+            error: 'Failed to get chapters'
         });
     }
 });
@@ -358,9 +410,16 @@ function addSentenceSpans(htmlContent, cleanText) {
  */
 app.get('/api/books/:filename/chapters/:id', async (req, res) => {
     try {
-        const filename = decodeURIComponent(req.params.filename);
+        // Validate filename to prevent path traversal attacks
+        const filename = validateFilename(req.params.filename, DATA_DIR);
         const chapterId = req.params.id;
-        const filePath = path.join(DATA_DIR, filename);
+        const filePath = createSecurePath(DATA_DIR, filename);
+        
+        // Verify file access is safe
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'Book not found' });
+        }
+        
         const reader = await getEpubReader(filePath);
 
         const rawContent = await reader.getChapterContent(chapterId);
@@ -379,9 +438,19 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
             rawContent: rawContent  // Original HTML content
         });
     } catch (error) {
+        // Handle security violations
+        if (error.message.includes('traversal') || error.message.includes('injection')) {
+            log.warn('Security violation attempt:', {
+                ip: req.ip,
+                userAgent: req.get('User-Agent'),
+                filename: req.params.filename,
+                error: error.message
+            });
+            return res.status(400).json({ error: 'Invalid filename' });
+        }
+        
         res.status(404).json({
-            error: 'Chapter not found or could not be read',
-            message: error.message
+            error: 'Chapter not found or could not be read'
         });
     }
 });
