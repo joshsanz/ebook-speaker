@@ -11,13 +11,22 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const cors = require('cors');
 const multer = require('multer');
+const fileUpload = require('express-fileupload');
+const rateLimit = require('express-rate-limit');
 const log = require('loglevel');
 const EpubReader = require('./epub-reader');
 const apicache = require('apicache');
 const { validateFilename, createSecurePath, validateFileAccess } = require('./utils/security');
 const { sanitizeEpubHtml, analyzeHtmlSecurity } = require('./utils/htmlSanitizer');
+const { 
+    validateFileUpload, 
+    quarantineFile, 
+    MAX_FILE_SIZE, 
+    ALLOWED_FILE_EXTENSIONS 
+} = require('./utils/fileUploadSecurity');
 
 // =============================================================================
 // CONFIGURATION
@@ -165,7 +174,42 @@ const ttsCacheOptions = {
     }
 };
 
-// Multer configuration for file uploads
+// Rate limiting configuration for file uploads
+const uploadRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 uploads per window
+    message: {
+        error: 'Too many upload attempts. Please try again later.',
+        retryAfter: '15 minutes'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Custom key generator to include user agent for better tracking
+    keyGenerator: (req) => {
+        return req.ip + ':' + (req.get('User-Agent') || '').substring(0, 50);
+    },
+    // Skip successful uploads from the rate limit count
+    skipSuccessfulRequests: true,
+    // Skip failed uploads to prevent lockout from legitimate errors
+    skipFailedRequests: false
+});
+
+// File upload middleware configuration
+const fileUploadConfig = {
+    limits: {
+        fileSize: MAX_FILE_SIZE,
+        files: 1 // Only allow single file uploads
+    },
+    abortOnLimit: true,
+    responseOnLimit: 'File too large',
+    useTempFiles: true,
+    tempFileDir: '/tmp/',
+    safeFileNames: true,
+    preserveExtension: 4, // Preserve up to 4 characters of extension
+    debug: process.env.NODE_ENV === 'development'
+};
+
+// Legacy multer support (keeping for now, may be used elsewhere)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
@@ -216,35 +260,193 @@ app.get('/api/books', async (req, res) => {
 });
 
 /**
- * Upload a new EPUB file
+ * Upload a new EPUB file with comprehensive security validation
  */
-app.post('/api/books', upload.single('file'), async (req, res) => {
+app.post('/api/books', uploadRateLimit, fileUpload(fileUploadConfig), async (req, res) => {
+    const startTime = Date.now();
+    let tempFilePath = null;
+    
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
+        // Check if file was uploaded
+        if (!req.files || !req.files.file) {
+            return res.status(400).json({ 
+                error: 'No file uploaded',
+                allowedTypes: ALLOWED_FILE_EXTENSIONS,
+                maxSize: `${MAX_FILE_SIZE / (1024*1024)}MB`
+            });
         }
 
-        // Parse the EPUB buffer to get metadata
-        const reader = new EpubReader(req.file.buffer, true);
-        await reader.initialize();
-        await reader.improveChapterTitles();
-        const metadata = reader.getMetadata();
+        const uploadedFile = req.files.file;
+        tempFilePath = uploadedFile.tempFilePath;
+        
+        // Security logging
+        log.info('File upload attempt:', {
+            originalName: uploadedFile.name,
+            size: uploadedFile.size,
+            mimetype: uploadedFile.mimetype,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+        });
 
+        // Read file buffer for validation
+        let fileBuffer;
+        if (uploadedFile.data) {
+            fileBuffer = uploadedFile.data;
+        } else if (tempFilePath) {
+            fileBuffer = await fsPromises.readFile(tempFilePath);
+        } else {
+            return res.status(400).json({ error: 'Could not read uploaded file' });
+        }
+
+        // SECURITY: Comprehensive file validation
+        const validation = await validateFileUpload(fileBuffer, uploadedFile.name, {
+            dataDir: DATA_DIR,
+            userId: 'anonymous', // TODO: Use actual user ID when auth is implemented
+            strictMode: process.env.NODE_ENV === 'production'
+        });
+
+        // Handle validation failures
+        if (!validation.isValid) {
+            log.warn('File upload rejected:', {
+                originalName: uploadedFile.name,
+                errors: validation.errors,
+                warnings: validation.warnings,
+                ip: req.ip
+            });
+
+            return res.status(400).json({
+                error: 'File validation failed',
+                details: validation.errors,
+                allowedTypes: ALLOWED_FILE_EXTENSIONS,
+                maxSize: `${MAX_FILE_SIZE / (1024*1024)}MB`
+            });
+        }
+
+        // Handle suspicious files requiring quarantine
+        if (validation.shouldQuarantine) {
+            const quarantinePath = await quarantineFile(
+                fileBuffer, 
+                uploadedFile.name, 
+                validation.warnings
+            );
+            
+            log.warn('File quarantined for manual review:', {
+                originalName: uploadedFile.name,
+                quarantinePath: quarantinePath,
+                warnings: validation.warnings,
+                ip: req.ip
+            });
+
+            return res.status(202).json({
+                message: 'File quarantined for security review',
+                warnings: validation.warnings,
+                supportMessage: 'Please contact support if you believe this is an error'
+            });
+        }
+
+        // Parse the EPUB to get metadata (with additional error handling)
+        let reader, metadata;
+        try {
+            reader = new EpubReader(fileBuffer, true);
+            await reader.initialize();
+            await reader.improveChapterTitles();
+            metadata = reader.getMetadata();
+        } catch (epubError) {
+            log.error('EPUB parsing failed:', {
+                originalName: uploadedFile.name,
+                error: epubError.message,
+                fileHash: validation.fileHash
+            });
+
+            return res.status(400).json({
+                error: 'Invalid EPUB file - could not parse book content',
+                details: 'The file appears to be corrupted or not a valid EPUB format'
+            });
+        }
+
+        // Create secure storage path
         const author = metadata.creator || 'Unknown';
         const authorDir = parseAuthorForDirectory(author);
         const dirPath = path.join(DATA_DIR, authorDir);
 
-        if (!fs.existsSync(dirPath)) {
-            fs.mkdirSync(dirPath, { recursive: true });
+        // Ensure directory exists with proper permissions
+        await fsPromises.mkdir(dirPath, { recursive: true });
+
+        // Use secure filename to prevent conflicts and attacks
+        const secureFileName = validation.secureFilename;
+        const finalFilePath = path.join(dirPath, secureFileName);
+
+        // Check if file would overwrite existing file
+        if (await fsPromises.access(finalFilePath).then(() => true).catch(() => false)) {
+            log.warn('File would overwrite existing file:', {
+                originalName: uploadedFile.name,
+                finalPath: finalFilePath
+            });
+            
+            return res.status(409).json({
+                error: 'A file with this content already exists',
+                suggestion: 'Please check if this book is already in your library'
+            });
         }
 
-        const filePath = path.join(dirPath, req.file.originalname);
-        fs.writeFileSync(filePath, req.file.buffer);
+        // Write file securely
+        await fsPromises.writeFile(finalFilePath, fileBuffer);
 
-        res.status(201).json({ message: 'File uploaded successfully' });
+        // Success logging
+        const processingTime = Date.now() - startTime;
+        log.info('File upload successful:', {
+            originalName: uploadedFile.name,
+            secureFileName: secureFileName,
+            fileHash: validation.fileHash,
+            title: metadata.title,
+            author: author,
+            size: uploadedFile.size,
+            processingTime: `${processingTime}ms`,
+            warnings: validation.warnings.length > 0 ? validation.warnings : undefined
+        });
+
+        // Return success response with metadata
+        const response = {
+            message: 'File uploaded successfully',
+            book: {
+                title: metadata.title,
+                author: author,
+                filename: path.join(authorDir, secureFileName),
+                size: uploadedFile.size,
+                uploadDate: new Date().toISOString()
+            }
+        };
+
+        // Include warnings if any (but file was still accepted)
+        if (validation.warnings.length > 0) {
+            response.warnings = validation.warnings;
+        }
+
+        res.status(201).json(response);
+
     } catch (error) {
-        log.error('Error uploading file:', error);
-        res.status(500).json({ error: 'Failed to upload file' });
+        // Security incident logging for unexpected errors
+        log.error('File upload error:', {
+            originalName: req.files?.file?.name || 'unknown',
+            error: error.message,
+            stack: error.stack,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+        });
+
+        res.status(500).json({
+            error: 'Upload processing failed',
+            message: 'An error occurred while processing your upload'
+        });
+    } finally {
+        // Cleanup temporary files
+        if (tempFilePath) {
+            try {
+                await fsPromises.unlink(tempFilePath);
+            } catch (cleanupError) {
+                log.warn('Failed to cleanup temp file:', cleanupError.message);
+            }
+        }
     }
 });
 
