@@ -17,15 +17,18 @@ export const useAudioQueue = () => {
 
   /**
    * Generates audio queue for all sentences
-   * @param {string} text - Text to process
+   * @param {string|string[]} textOrSentences - Text to process OR pre-processed sentences array
    * @param {string} voice - Voice identifier
    * @param {number} speed - Playback speed
    * @param {Function} setIsLoadingAudio - Loading state setter
    * @param {Function} setTotalAudioCount - Total count setter
    * @returns {Promise<string[]>} Array of audio URLs
    */
-  const generateAudioQueue = useCallback(async (text, voice, speed, setIsLoadingAudio, setTotalAudioCount) => {
-    const sentences = splitIntoSentences(text);
+  const generateAudioQueue = useCallback(async (textOrSentences, voice, speed, setIsLoadingAudio, setTotalAudioCount) => {
+    // Support both raw text (legacy) and pre-processed sentences (new)
+    const sentences = Array.isArray(textOrSentences) 
+      ? textOrSentences 
+      : splitIntoSentences(textOrSentences);
 
     if (sentences.length === 0) {
       return [];

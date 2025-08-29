@@ -12,6 +12,7 @@ export const useBookData = (filename) => {
   const [currentChapter, setCurrentChapter] = useState(null);
   const [chapterContent, setChapterContent] = useState('');
   const [chapterTextContent, setChapterTextContent] = useState('');
+  const [ttsSentences, setTtsSentences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -56,8 +57,9 @@ export const useBookData = (filename) => {
       }
       
       const data = await response.json();
-      setChapterContent(data.content);  // HTML content for display
-      setChapterTextContent(data.textContent);  // Clean text for speech
+      setChapterContent(data.content);  // HTML content with spans for highlighting
+      setChapterTextContent(data.textContent);  // Original clean text (for reference)
+      setTtsSentences(data.ttsSentences || []);  // Pre-processed sentences for TTS
       
       const chapter = chapters.find(ch => ch.id === chapterId);
       setCurrentChapter(chapter);
@@ -75,6 +77,7 @@ export const useBookData = (filename) => {
     setCurrentChapter(null);
     setChapterContent('');
     setChapterTextContent('');
+    setTtsSentences([]);
     setError(null);
   }, []);
 
@@ -85,6 +88,7 @@ export const useBookData = (filename) => {
     currentChapter,
     chapterContent,
     chapterTextContent,
+    ttsSentences,
     loading,
     error,
     

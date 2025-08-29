@@ -14,7 +14,6 @@ import TableOfContents from './TableOfContents.jsx';
 import ScrollToTopButton from './ScrollToTopButton.jsx';
 import { ErrorDisplay, LoadingDisplay } from './ErrorBoundary.jsx';
 import { STORAGE_KEYS, DEFAULT_VALUES, ERROR_MESSAGES } from '../constants/bookReader';
-import { sanitizeForDisplay, isContentSafe } from '../utils/htmlSanitizer';
 import logger from '../utils/logger';
 import './BookReader.css';
 
@@ -28,7 +27,7 @@ const BookReader = () => {
   
   // Custom hooks for state management
   const { 
-    book, chapters, currentChapter, chapterContent, chapterTextContent, 
+    book, chapters, currentChapter, chapterContent, chapterTextContent, ttsSentences,
     loading, error, fetchBookData, fetchChapterContent, resetChapterState, setError 
   } = useBookData(filename);
   
@@ -60,6 +59,7 @@ const BookReader = () => {
     audioRef, speakText, pauseSpeaking, resumeSpeaking, fastForward, 
     rewind, stopSpeaking, handleAudioEnded, handleSpeedChange, handleVoiceChange
   } = useTTS(handleAutoAdvance);
+
   
   const {
     voices, groupedVoices, loading: voicesLoading, 
@@ -69,18 +69,10 @@ const BookReader = () => {
   // Sentence highlighting hook
   const { highlightSentence, clearHighlight, clearAllHighlights } = useSentenceHighlighting();
 
-  // SECURITY: Sanitize chapter content to prevent XSS attacks
-  const sanitizedChapterContent = useMemo(() => {
-    if (!chapterContent) return '';
-    
-    // Check if content appears to be already safe
-    if (!isContentSafe(chapterContent)) {
-      logger.warn('Unsafe HTML content detected in chapter, applying client-side sanitization');
-    }
-    
-    // Apply client-side sanitization as defense-in-depth
-    return sanitizeForDisplay(chapterContent);
-  }, [chapterContent]);
+  // Content is already sanitized on the server before sentence spans are added
+  // No need for additional client-side sanitization that could break sentence highlighting
+  const sanitizedChapterContent = chapterContent || '';
+
 
   /**
    * Handles speak/pause button clicks
@@ -96,13 +88,13 @@ const BookReader = () => {
       return;
     }
 
-    if (!chapterTextContent.trim()) {
+    if (!ttsSentences || ttsSentences.length === 0) {
       alert(ERROR_MESSAGES.NO_TEXT_CONTENT);
       return;
     }
 
     try {
-      await speakText(chapterTextContent, selectedVoice, selectedSpeed);
+      await speakText(ttsSentences, selectedVoice, selectedSpeed);
     } catch (error) {
       logger.error('TTS Error:', error);
       
@@ -117,7 +109,7 @@ const BookReader = () => {
       
       alert(errorMessage);
     }
-  }, [isSpeaking, isPaused, chapterTextContent, speakText, selectedVoice, selectedSpeed, pauseSpeaking, resumeSpeaking]);
+  }, [isSpeaking, isPaused, ttsSentences, speakText, selectedVoice, selectedSpeed, pauseSpeaking, resumeSpeaking]);
 
 
 
@@ -175,12 +167,12 @@ const BookReader = () => {
 
   // Auto-start TTS when chapter content is loaded and autoStartTTS is true
   useEffect(() => {
-    if (autoStartTTS && chapterTextContent && !isSpeaking && !isLoadingAudio && !loading) {
+    if (autoStartTTS && ttsSentences && ttsSentences.length > 0 && !isSpeaking && !isLoadingAudio && !loading) {
       logger.info('Auto-starting TTS after chapter advance');
 
       const timer = setTimeout(async () => {
         try {
-          await speakText(chapterTextContent, selectedVoice, selectedSpeed);
+          await speakText(ttsSentences, selectedVoice, selectedSpeed);
           logger.info('TTS auto-started successfully');
         } catch (error) {
           logger.error('Error auto-starting TTS:', error);
@@ -190,7 +182,7 @@ const BookReader = () => {
 
       return () => clearTimeout(timer);
     }
-  }, [autoStartTTS, chapterTextContent, isSpeaking, isLoadingAudio, loading, speakText, selectedVoice, selectedSpeed, setAutoStartTTS]);
+  }, [autoStartTTS, ttsSentences, isSpeaking, isLoadingAudio, loading, speakText, selectedVoice, selectedSpeed, setAutoStartTTS]);
 
 
   // Set default voice when voices are loaded
@@ -213,15 +205,16 @@ const BookReader = () => {
 
   // Sync sentence highlighting with TTS playback
   useEffect(() => {
-    if (isSpeaking && currentAudioIndex >= 0) {
-      highlightSentence(currentAudioIndex);
+    if (isSpeaking && !isPaused && currentAudioIndex >= 0) {
+      // Use requestAnimationFrame to throttle highlighting updates
+      const rafId = requestAnimationFrame(() => {
+        highlightSentence(currentAudioIndex);
+      });
+      return () => cancelAnimationFrame(rafId);
     } else if (!isSpeaking) {
-      // Only clear highlight when TTS is completely stopped, not when paused
       clearHighlight();
     }
-    // If paused (isSpeaking=true, isPaused=true), keep the current highlight
-  }, [currentAudioIndex, isSpeaking, highlightSentence, clearHighlight]);
-
+  }, [currentAudioIndex, isSpeaking, isPaused, highlightSentence, clearHighlight]);
 
   if (loading) {
     return <LoadingDisplay />;

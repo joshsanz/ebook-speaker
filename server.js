@@ -8,14 +8,19 @@
  * - Static file serving for production builds
  */
 
+// Load environment variables
+require('dotenv').config();
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
 const cors = require('cors');
+const { processForTTSAndHighlighting } = require('./shared/textProcessing.js');
 const multer = require('multer');
 const fileUpload = require('express-fileupload');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const log = require('loglevel');
 const EpubReader = require('./epub-reader');
 const apicache = require('apicache');
@@ -48,8 +53,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve static files from React build
-app.use(express.static(CLIENT_BUILD_DIR));
+// Serve static files from React build only in production
+if (process.env.NODE_ENV === 'production') {
+    log.info('Production mode: serving static files from client/build');
+    app.use(express.static(CLIENT_BUILD_DIR));
+} else {
+    log.info('Development mode: static file serving disabled (use Vite dev server on port 3000)');
+}
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -186,7 +196,7 @@ const uploadRateLimit = rateLimit({
     legacyHeaders: false,
     // Custom key generator to include user agent for better tracking
     keyGenerator: (req) => {
-        return req.ip + ':' + (req.get('User-Agent') || '').substring(0, 50);
+        return ipKeyGenerator(req) + ':' + (req.get('User-Agent') || '').substring(0, 50);
     },
     // Skip successful uploads from the rate limit count
     skipSuccessfulRequests: true,
@@ -565,48 +575,7 @@ app.get('/api/books/:filename/chapters', async (req, res) => {
     }
 });
 
-/**
- * Wraps sentences in HTML content with sentence index spans
- * @param {string} htmlContent - HTML content to process
- * @param {string} cleanText - Clean text version for sentence splitting
- * @returns {string} HTML with sentence spans
- */
-function addSentenceSpans(htmlContent, cleanText) {
-    // Split clean text into sentences using same logic as frontend
-    const sentences = cleanText
-        .split(/[.!?]+/)
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
-    
-    if (sentences.length === 0) return htmlContent;
-    
-    let processedHtml = htmlContent;
-    let sentenceIndex = 0;
-    
-    sentences.forEach((sentence, index) => {
-        if (sentence.length === 0) return;
-        
-        // Escape special regex characters in the sentence
-        const escapedSentence = sentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        
-        // Create a flexible regex that matches the sentence with possible HTML tags in between
-        const sentencePattern = new RegExp(
-            escapedSentence.split(/\s+/).map(word => 
-                word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            ).join('(?:<[^>]*>)*\\s*(?:<[^>]*>)*'),
-            'i'
-        );
-        
-        // Find and wrap the sentence
-        processedHtml = processedHtml.replace(sentencePattern, (match) => {
-            return `<span data-sentence-index="${sentenceIndex}">${match}</span>`;
-        });
-        
-        sentenceIndex++;
-    });
-    
-    return processedHtml;
-}
+// addSentenceSpans function now imported from shared/textProcessing.js
 
 /**
  * Get specific chapter content
@@ -631,10 +600,7 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
         // Process hyperlinks for React routing by passing the book filename
         let htmlContent = reader.getRawHtmlContent(rawContent, filename);
         
-        // Add sentence mapping spans for highlighting
-        htmlContent = addSentenceSpans(htmlContent, cleanTextContent);
-        
-        // SECURITY: Sanitize HTML content to prevent XSS attacks
+        // SECURITY: Sanitize HTML content to prevent XSS attacks BEFORE adding spans
         const securityAnalysis = analyzeHtmlSecurity(htmlContent);
         if (!securityAnalysis.safe) {
             log.warn('Potentially unsafe HTML content detected in EPUB:', {
@@ -645,13 +611,18 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
             });
         }
         
-        // Sanitize the HTML content before sending to client
-        const sanitizedHtmlContent = sanitizeEpubHtml(htmlContent);
+        // Sanitize the HTML content first to prevent spans from being removed
+        htmlContent = sanitizeEpubHtml(htmlContent);
+        
+        // Process text for both TTS and highlighting in single pass
+        const processedResult = processForTTSAndHighlighting(htmlContent, cleanTextContent);
 
         res.json({
             id: chapterId,
-            content: sanitizedHtmlContent,  // SANITIZED HTML content safe for display
-            textContent: cleanTextContent,  // Clean text for speech synthesis
+            content: processedResult.htmlContent,  // HTML with sentence spans for highlighting
+            textContent: cleanTextContent,  // Original clean text (for reference)
+            ttsSentences: processedResult.pronounceableSentences,  // ONLY pronounceable sentences for TTS
+            sentenceCount: processedResult.pronounceableSentences.length,  // Count for client
             rawContent: rawContent  // Original HTML content (for debugging only)
         });
     } catch (error) {
@@ -780,10 +751,18 @@ app.delete('/api/tts/cache', (req, res) => {
 // =============================================================================
 
 /**
- * Serve React app for all other routes (catch-all)
+ * Serve React app for all other routes (catch-all) - only in production
  */
 app.get('*', (req, res) => {
-    res.sendFile(path.join(CLIENT_BUILD_DIR, 'index.html'));
+    if (process.env.NODE_ENV === 'production') {
+        res.sendFile(path.join(CLIENT_BUILD_DIR, 'index.html'));
+    } else {
+        res.status(404).json({ 
+            error: 'Not Found', 
+            message: 'In development mode, please use the Vite dev server on port 3000',
+            developmentUrl: 'http://localhost:3000'
+        });
+    }
 });
 
 // =============================================================================
@@ -794,7 +773,16 @@ app.get('*', (req, res) => {
  * Start the Express server
  */
 app.listen(PORT, () => {
-    log.info(`EPUB Speaker server running on http://localhost:${PORT}`);
+    log.info(`🚀 EPUB Speaker server running on http://localhost:${PORT}`);
+    
+    if (process.env.NODE_ENV === 'production') {
+        log.info(`📦 Production mode: Full-stack app available at http://localhost:${PORT}`);
+    } else {
+        log.info(`🔧 Development mode: API server only`);
+        log.info(`🌐 For frontend, use: http://localhost:3000 (Vite dev server)`);
+        log.info(`🚫 Port ${PORT} serves API only - frontend requests will redirect to port 3000`);
+    }
+    
     log.info(`TTS Service URL: ${TTS_SERVICE_URL}`);
     log.info(`TTS Cache enabled with ${TTS_CACHE_DURATION} timeout (apicache)`);
     log.info('Available EPUB files in data directory:');

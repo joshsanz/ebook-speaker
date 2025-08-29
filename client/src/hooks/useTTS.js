@@ -55,38 +55,49 @@ export const useTTS = (onAutoAdvance) => {
   }, [currentAudioIndex, totalAudioCount, isPaused, onAutoAdvance, handleAudioEndedCore, clearAudioQueue]);
 
   /**
-   * Starts TTS playback for given text
-   * @param {string} text - Text to speak
+   * Starts TTS playback for given text or pre-processed sentences
+   * @param {string|string[]} textOrSentences - Text to speak OR pre-processed sentences array
    * @param {string} voice - Voice identifier
    * @param {number} speed - Playback speed
    */
-  const speakText = useCallback(async (text, voice = TTS_CONFIG.DEFAULT_VOICE, speed = TTS_CONFIG.DEFAULT_SPEED) => {
+  const speakText = useCallback(async (textOrSentences, voice = TTS_CONFIG.DEFAULT_VOICE, speed = TTS_CONFIG.DEFAULT_SPEED) => {
     if (isSpeaking) {
       stopSpeaking();
       return;
     }
 
-    if (!text.trim()) {
+    // Validate input - support both text and sentences array
+    const hasContent = Array.isArray(textOrSentences) 
+      ? textOrSentences.length > 0 
+      : textOrSentences && textOrSentences.trim();
+      
+    if (!hasContent) {
       throw new Error(TTS_ERRORS.NO_TEXT_CONTENT);
     }
 
     try {
+      logger.info(`[useTTS] Starting TTS playback - setting isSpeaking=true, currentAudioIndex=0`);
       setIsSpeaking(true);
       setCurrentAudioIndex(0);
 
-      const audioUrls = await generateAudioQueue(text, voice, speed, setIsLoadingAudio, setTotalAudioCount);
+      const audioUrls = await generateAudioQueue(textOrSentences, voice, speed, setIsLoadingAudio, setTotalAudioCount);
+      logger.info(`[useTTS] Generated ${audioUrls.length} audio URLs`);
 
       if (audioUrls.length > 0) {
         // Start playing first audio after a short delay
         setTimeout(async () => {
+          logger.info(`[useTTS] Starting initial audio playback at index 0`);
           const success = await playAudioAtIndex(0, isPaused);
           if (!success) {
             logger.error('Failed to start initial audio playback');
             setIsSpeaking(false);
             setIsLoadingAudio(false);
+          } else {
+            logger.info(`[useTTS] Initial audio playback started successfully`);
           }
         }, TTS_CONFIG.AUDIO_READY_DELAY);
       } else {
+        logger.warn(`[useTTS] No audio URLs generated, setting isSpeaking=false`);
         setIsSpeaking(false);
       }
     } catch (error) {
