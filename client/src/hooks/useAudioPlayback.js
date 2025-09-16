@@ -80,24 +80,28 @@ export const useAudioPlayback = (getAudioAtIndex, getQueueLength) => {
     clearQueue,
     abortController
   ) => {
+    logger.info(`[useAudioPlayback] Audio ended for index ${currentIndex}, total: ${totalCount}`);
+    
     // Prevent multiple simultaneous calls
     if (isProcessingEndRef.current || isNavigatingRef.current) {
-      logger.debug('handleAudioEnded already processing, ignoring duplicate call');
+      logger.info(`[useAudioPlayback] Already processing or navigating, ignoring duplicate call`);
       return;
     }
 
     isProcessingEndRef.current = true;
 
-    setTimeout(() => {
+    // Use requestAnimationFrame to ensure proper timing and avoid blocking
+    requestAnimationFrame(() => {
       const nextIndex = currentIndex + 1;
-      
-      logger.debug(`Audio ${currentIndex} ended, moving to ${nextIndex}`);
+      logger.info(`[useAudioPlayback] Moving from index ${currentIndex} to ${nextIndex}`);
 
       if (nextIndex < totalCount) {
+        logger.info(`[useAudioPlayback] Setting currentAudioIndex to ${nextIndex}`);
         setCurrentAudioIndex(nextIndex);
         waitForNextAudio(nextIndex, totalCount, isPaused, setIsSpeaking);
       } else {
         // Playback finished
+        logger.info(`[useAudioPlayback] Playback finished at index ${currentIndex}`);
         finishPlayback(setIsSpeaking, setTotalAudioCount, clearQueue, onAutoAdvance, abortController);
       }
 
@@ -105,7 +109,7 @@ export const useAudioPlayback = (getAudioAtIndex, getQueueLength) => {
       setTimeout(() => {
         isProcessingEndRef.current = false;
       }, TTS_CONFIG.PROCESSING_RESET_DELAY);
-    }, TTS_CONFIG.AUDIO_END_DELAY);
+    });
   }, []);
 
   /**
