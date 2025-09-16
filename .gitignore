@@ -156,7 +156,11 @@ Desktop.ini
 
 data/
 .claude/
+.gemini/
 
 # Documentation files that should not be tracked
+CLAUDE.md
 GEMINI.md
 TODOs.txt
+security-plan.md
+

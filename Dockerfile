@@ -52,6 +52,8 @@ COPY --from=client-builder /app/client/build ./client/build
 COPY server.js ./
 COPY epub-reader.js ./
 COPY package*.json ./
+COPY shared/ ./shared/
+COPY utils/ ./utils/
 
 # Create data directory and set proper ownership
 RUN mkdir -p data && chown -R appuser:appuser /app
