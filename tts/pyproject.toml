@@ -3,11 +3,12 @@ name = "tts"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116.1",
-    "kokoro-onnx>=0.4.9",
+    "kokoro-onnx[gpu]>=0.4.9",
     "pydantic>=2.11.7",
     "uvicorn>=0.35.0",
     "requests>=2.31.0",
+    "tensorrt-cu12>=10.13.2.6",
 ]

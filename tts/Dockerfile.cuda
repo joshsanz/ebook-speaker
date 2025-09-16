@@ -1,0 +1,113 @@
+# CUDA-enabled multi-stage build for onnxruntime with GPU acceleration
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 AS onnx-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    wget \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for build
+RUN python3 -m venv /opt/build-venv
+ENV PATH="/opt/build-venv/bin:$PATH"
+
+# Install build requirements
+RUN pip install --upgrade pip wheel setuptools numpy packaging
+
+# Clone and build onnxruntime with CUDA support
+WORKDIR /tmp/onnxruntime
+RUN git clone --recursive --branch v1.22.2 https://github.com/microsoft/onnxruntime.git . && \
+    ./build.sh \
+        --config Release \
+        --build_shared_lib \
+        --parallel \
+        --use_cuda \
+        --cuda_version=12.8 \
+        --cuda_home=/usr/local/cuda \
+        --cudnn_home=/usr/lib/x86_64-linux-gnu \
+        --build_wheel \
+        --skip_tests \
+        --allow_running_as_root \
+        --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;100;120"
+
+# Application builder stage
+FROM python:3.12-slim AS builder
+
+# Install uv for fast Python package installation
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Create a modified pyproject.toml without onnxruntime (we'll install our custom build)
+RUN sed '/onnxruntime/d' pyproject.toml > pyproject.temp.toml && mv pyproject.temp.toml pyproject.toml
+
+# Install dependencies using uv (excluding onnxruntime)
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Copy the custom-built onnxruntime wheel from the builder stage
+COPY --from=onnx-builder /tmp/onnxruntime/build/Linux/Release/dist/*.whl /tmp/
+
+# Install the custom onnxruntime wheel
+RUN uv pip install /tmp/*.whl
+
+# Production stage
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04 AS runtime
+
+# Install runtime system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-venv \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN groupadd --gid 1001 appuser && \
+    useradd --uid 1001 --gid appuser --shell /bin/bash --create-home appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy installed dependencies from builder stage
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code and entrypoint
+COPY main.py entrypoint.sh ./
+
+# Set proper ownership and permissions
+RUN chown -R appuser:appuser /app && \
+    chmod +x /app/main.py && \
+    chmod +x /app/entrypoint.sh
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Expose port
+EXPOSE 5005
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5005/health || exit 1
+
+# Add shutdown handling 
+STOPSIGNAL SIGTERM
+
+# Start the application with the entrypoint script
+CMD ["./entrypoint.sh"]

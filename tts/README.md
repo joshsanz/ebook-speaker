@@ -224,7 +224,7 @@ The service can be containerized using Docker for easy deployment and portabilit
 
 #### Docker Configuration
 
-- **Base Image**: Python 3.13 slim
+- **Base Image**: Python 3.12 slim
 - **Port**: 5005
 - **Health Check**: Integrated with `/health` endpoint
 - **Resource Limits**: 2GB RAM, 1 CPU (configurable in docker-compose.yml)

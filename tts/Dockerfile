@@ -1,5 +1,5 @@
 # Multi-stage build for optimized image size
-FROM python:3.13-slim AS builder
+FROM python:3.12-slim AS builder
 
 # Install uv for fast Python package installation
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Production stage
-FROM python:3.13-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 # Install runtime system dependencies (if needed)
 RUN apt-get update && apt-get install -y \
@@ -22,8 +22,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
-RUN groupadd --gid 1000 appuser && \
-    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+RUN groupadd --gid 1001 appuser && \
+    useradd --uid 1001 --gid appuser --shell /bin/bash --create-home appuser
 
 # Set working directory
 WORKDIR /app

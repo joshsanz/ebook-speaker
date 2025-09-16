@@ -33,7 +33,7 @@ def signal_handler(signum, frame):
         time.sleep(2)  # Wait 2 seconds for current requests
         print("🔴 Forcing exit...")
         os._exit(0)
-    
+
     threading.Thread(target=delayed_exit, daemon=True).start()
 
 
@@ -69,20 +69,20 @@ def download_file_if_missing(url: str, filename: str) -> bool:
 def find_model_files():
     """Find model files, checking mounted directory first, then current directory, then download"""
     print("🔍 Checking for required model files...")
-    
+
     # Model file patterns
     model_patterns = ["kokoro-v1.0.fp16.onnx", "kokoro-v1.0.onnx", "kokoro.onnx"]
     voice_patterns = ["voices-v1.0.bin", "voices.bin"]
-    
+
     model_name = None
     voice_name = None
-    
+
     # Check mounted models directory first
     mounted_dir = "/app/models"
     if os.path.exists(mounted_dir):
         print("📁 Checking mounted models directory...")
         mounted_files = os.listdir(mounted_dir)
-        
+
         # Look for model files
         for pattern in model_patterns:
             if pattern in mounted_files:
@@ -90,7 +90,7 @@ def find_model_files():
                 print(f"✓ Found mounted model: {pattern}")
                 model_name = model_path
                 break
-        
+
         # Look for voice files
         for pattern in voice_patterns:
             if pattern in mounted_files:
@@ -98,7 +98,7 @@ def find_model_files():
                 print(f"✓ Found mounted voices: {pattern}")
                 voice_name = voice_path
                 break
-    
+
     # Check current directory if not found in mounted dir
     if not model_name:
         for pattern in model_patterns:
@@ -106,20 +106,20 @@ def find_model_files():
                 print(f"✓ Found local model: {pattern}")
                 model_name = pattern
                 break
-    
+
     if not voice_name:
         for pattern in voice_patterns:
             if os.path.exists(pattern):
                 print(f"✓ Found local voices: {pattern}")
                 voice_name = pattern
                 break
-    
+
     # Download if still not found
     if not model_name or not voice_name:
         print("📥 Model files not found locally, downloading...")
         default_model = "kokoro-v1.0.fp16.onnx"
         default_voices = "voices-v1.0.bin"
-        
+
         files_to_download = []
         if not model_name:
             files_to_download.append({
@@ -127,26 +127,26 @@ def find_model_files():
                 "filename": default_model
             })
             model_name = default_model
-        
+
         if not voice_name:
             files_to_download.append({
                 "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_voices}",
                 "filename": default_voices
             })
             voice_name = default_voices
-        
+
         all_files_present = True
         for file_info in files_to_download:
             if not download_file_if_missing(file_info["url"], file_info["filename"]):
                 all_files_present = False
-        
+
         if not all_files_present:
             raise Exception("Failed to download required model files")
-    
+
     print("✅ All model files are ready")
     print(f"🎵 Using model: {model_name}")
     print(f"🗣️ Using voices: {voice_name}")
-    
+
     return model_name, voice_name
 
 
@@ -157,20 +157,25 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Starting TTS service...")
     setup_signal_handlers()
-    
+
     try:
         # Find model files (mounted, local, or download)
         model, voices = find_model_files()
 
         # Create ONNX session to select an accelerator (CoreML/CUDA) if available
         providers = ort.get_available_providers()
-        if "CUDAExececutionProvider" in providers:
-            # Apply CUDA conv algo search performance tweak
-            providers = [("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT"}), "CPUExecutionProvider"]
-        elif "CoreMLExecutionProvider" in providers:
-            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
-        else:
-            providers = ["CPUExecutionProvider"]
+        print("Available EPs:", ", ".join(providers))
+
+        # Remove TensorRT provider while debugging errors it causes
+        providers = [provider for provider in providers if provider != "TensorrtExecutionProvider"]
+        print("Filtered EPs (TensorRT removed):", ", ".join(providers))
+
+        if "CUDAExecutionProvider" in providers:
+            # Apply CUDA conv algo search performance tweak by modifying the provider in place
+            providers = [provider if provider != "CUDAExecutionProvider"
+                        else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "EXHAUSTIVE"})
+                        for provider in providers]
+
         print("Using inference engines", providers)
 
         sess_opts = ort.SessionOptions()
@@ -190,7 +195,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("🔄 Shutting down TTS service")
     shutdown_event.set()
-    
+
     # Give a moment for any ongoing requests to complete
     await asyncio.sleep(1)
     print("✅ TTS service shutdown complete")
@@ -433,7 +438,7 @@ async def get_languages():
 @app.post("/v1/audio/speech")
 async def text_to_speech(request: SpeechRequest):
     """Convert text to speech"""
-    
+
     # Check if shutdown has been requested
     if shutdown_event.is_set():
         raise HTTPException(
@@ -528,7 +533,7 @@ async def root():
 if __name__ == "__main__":
     # Setup signal handlers before starting uvicorn
     setup_signal_handlers()
-    
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
