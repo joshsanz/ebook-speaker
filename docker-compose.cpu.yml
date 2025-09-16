@@ -1,0 +1,78 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - TTS_SERVICE_URL=http://tts-service:5005
+    volumes:
+      - ebook-data:/app/data
+      - ./client/build:/app/client/build:ro
+    depends_on:
+      tts-service:
+        condition: service_healthy
+    networks:
+      - ebook-speaker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+
+  client-build:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run build"
+    depends_on:
+      - server
+
+  tts-service:
+    build:
+      context: ./tts
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:5005:5005"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - tts-models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ebook-speaker
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+networks:
+  ebook-speaker:
+    driver: bridge
+
+volumes:
+  ebook-data:
+    driver: local
+  tts-models:
+    driver: local
