@@ -1,15 +1,31 @@
 import { TTS_CONFIG, TEXT_PATTERNS } from '../constants/tts';
 
 /**
+ * Basic sentence splitting using shared logic
+ * @param {string} text - Input text to split
+ * @returns {string[]} Array of basic sentences
+ */
+export const splitIntoBasicSentences = (text) => {
+  if (!text || typeof text !== 'string') {
+    return [];
+  }
+
+  // Use same splitting logic as server: punctuation OR newlines
+  return text
+    .split(TEXT_PATTERNS.SENTENCE_SPLIT)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+};
+
+/**
  * Splits text into manageable sentences for TTS processing
+ * Enhanced version that handles long sentences
  * @param {string} text - Input text to split
  * @returns {string[]} Array of processed sentences
  */
 export const splitIntoSentences = (text) => {
-  const sentences = text
-    .split(TEXT_PATTERNS.SENTENCE_SPLIT)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
+  // Start with basic sentence splitting (same as server)
+  const sentences = splitIntoBasicSentences(text);
 
   const processedSentences = [];
   

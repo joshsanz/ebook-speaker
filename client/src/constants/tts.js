@@ -34,9 +34,10 @@ export const TTS_ERRORS = {
   EMPTY_RESPONSE: 'Received empty audio response'
 };
 
-// Regular expressions for text processing
+// Import shared text processing configuration
+// Note: This will be loaded via window.TextProcessing for browser compatibility
 export const TEXT_PATTERNS = {
-  SENTENCE_SPLIT: /(?<=[.!?])\s+(?=[A-Z])/,
+  SENTENCE_SPLIT: /[.!?]+|\n+/,
   MAJOR_BREAKS: /[;—]\s+/,
   COMMA_BREAKS: /,\s+/
 };
