@@ -6,16 +6,17 @@
 
 .speed-selection label {
   font-weight: 600;
-  color: #333;
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
 .speed-dropdown {
   min-width: 80px;
   padding: 6px 8px;
-  border: 2px solid #ddd;
+  border: 2px solid var(--border-primary);
   border-radius: 6px;
-  background-color: white;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
@@ -23,31 +24,31 @@
 }
 
 .speed-dropdown:hover {
-  border-color: #2196f3;
+  border-color: var(--text-accent);
 }
 
 .speed-dropdown:focus {
   outline: none;
-  border-color: #2196f3;
-  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+  border-color: var(--text-accent);
+  box-shadow: 0 0 0 3px var(--shadow-hover);
 }
 
 .speed-dropdown:disabled {
-  background-color: #f8f9fa;
-  color: #6c757d;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
   cursor: not-allowed;
-  border-color: #dee2e6;
+  border-color: var(--border-secondary);
 }
 
 .speed-dropdown.loading {
-  background-color: #f8f9fa;
-  color: #6c757d;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
 }
 
 .speed-dropdown.error {
-  background-color: #fff5f5;
-  color: #dc3545;
-  border-color: #dc3545;
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border-color: var(--error-border);
 }
 
 /* Responsive adjustments */
