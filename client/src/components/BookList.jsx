@@ -8,6 +8,7 @@ const BookList = () => {
     const [books, setBooks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [uploadError, setUploadError] = useState(null);
     const [view, setView] = useState('card');
     const [sortConfig, setSortConfig] = useState({ key: 'title', direction: 'ascending' });
     const [selectionMode, setSelectionMode] = useState(false);
@@ -36,6 +37,8 @@ const BookList = () => {
         const file = event.target.files[0];
         if (!file) return;
 
+        setUploadError(null); // Clear any previous upload errors
+
         const formData = new FormData();
         formData.append('file', file);
 
@@ -46,12 +49,21 @@ const BookList = () => {
             });
 
             if (!response.ok) {
-                throw new Error('File upload failed');
+                const errorData = await response.text();
+                throw new Error(`Upload failed: ${errorData || 'Unknown error'}`);
             }
 
             fetchBooks(); // Refresh the book list
+            // Clear the file input
+            event.target.value = '';
         } catch (err) {
-            setError(err.message);
+            // In production, show generic error message for security
+            const errorMessage = import.meta.env.MODE === 'production'
+                ? 'Upload failed. Please try again.'
+                : err.message;
+            setUploadError(errorMessage);
+            // Clear the file input on error
+            event.target.value = '';
         }
     };
 
@@ -126,6 +138,18 @@ const BookList = () => {
     return (
         <div className="book-list-container">
             <h2>Available EPUB Books</h2>
+            {uploadError && (
+                <div className="upload-error-banner">
+                    <span>{uploadError}</span>
+                    <button
+                        className="dismiss-error-button"
+                        onClick={() => setUploadError(null)}
+                        aria-label="Dismiss error"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
             <div className="controls">
                 <label htmlFor="file-upload" className="file-upload-label">
                     Upload EPUB

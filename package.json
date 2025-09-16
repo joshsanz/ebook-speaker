@@ -4,16 +4,20 @@
   "description": "A web server to read ebooks aloud with better text-to-speech than apple's default page reader",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "concurrently \"node server.js\" \"cd client && PORT=3000 npm start\"",
+    "start": "NODE_ENV=production node server.js",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"yellow.bold,cyan.bold\" \"NODE_ENV=development nodemon server.js\" \"cd client && PORT=3000 npm start\"",
+    "dev:server": "NODE_ENV=development nodemon server.js",
+    "dev:client": "cd client && PORT=3000 npm start",
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
+    "build:prod": "npm run build && npm run start",
     "install-client": "cd client && npm install"
   },
   "dependencies": {
     "apicache": "^1.6.3",
     "cors": "^2.8.5",
     "dompurify": "^3.2.6",
+    "dotenv": "^17.2.1",
     "epub2": "^3.0.2",
     "express": "^4.18.2",
     "express-fileupload": "^1.5.2",
@@ -26,7 +30,8 @@
     "sanitize-html": "^2.17.0"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.10"
   },
   "keywords": [
     "ebook",

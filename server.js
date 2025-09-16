@@ -300,10 +300,15 @@ app.post('/api/books', uploadRateLimit, fileUpload(fileUploadConfig), async (req
 
         // Read file buffer for validation
         let fileBuffer;
-        if (uploadedFile.data) {
+        // When useTempFiles is true, prioritize reading from temp file even if data buffer exists (but may be empty)
+        if (tempFilePath) {
+            try {
+                fileBuffer = await fsPromises.readFile(tempFilePath);
+            } catch (readError) {
+                return res.status(400).json({ error: 'Could not read uploaded file from temp location' });
+            }
+        } else if (uploadedFile.data && uploadedFile.data.length > 0) {
             fileBuffer = uploadedFile.data;
-        } else if (tempFilePath) {
-            fileBuffer = await fsPromises.readFile(tempFilePath);
         } else {
             return res.status(400).json({ error: 'Could not read uploaded file' });
         }

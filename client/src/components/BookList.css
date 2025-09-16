@@ -24,6 +24,46 @@
   border-radius: 8px;
 }
 
+.upload-error-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 8px rgba(244, 67, 54, 0.1);
+}
+
+.upload-error-banner span {
+  flex: 1;
+  font-size: 1rem;
+}
+
+.dismiss-error-button {
+  background: none;
+  border: none;
+  color: var(--error-text);
+  font-size: 1.5rem;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 1rem;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+}
+
+.dismiss-error-button:hover {
+  background-color: rgba(244, 67, 54, 0.1);
+}
+
 .no-books {
   text-align: center;
   padding: 3rem;
