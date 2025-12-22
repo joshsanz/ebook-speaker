@@ -10,8 +10,8 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies using uv
-RUN uv sync --frozen --no-install-project --no-dev
+# Install dependencies using uv with GPU support
+RUN uv sync --frozen --no-install-project --no-dev --extra gpu
 
 # Production stage
 FROM python:3.12-slim AS runtime

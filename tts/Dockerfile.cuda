@@ -49,11 +49,9 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Create a modified pyproject.toml without onnxruntime (we'll install our custom build)
-RUN sed '/onnxruntime/d' pyproject.toml > pyproject.temp.toml && mv pyproject.temp.toml pyproject.toml
-
-# Install dependencies using uv (excluding onnxruntime)
-RUN uv sync --frozen --no-install-project --no-dev
+# Install dependencies using uv with GPU support (excluding onnxruntime)
+# Note: We exclude onnxruntime since we'll install our custom-built onnxruntime
+RUN uv sync --frozen --no-install-project --no-dev --extra gpu
 
 # Copy the custom-built onnxruntime wheel from the builder stage
 COPY --from=onnx-builder /tmp/onnxruntime/build/Linux/Release/dist/*.whl /tmp/
