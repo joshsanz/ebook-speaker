@@ -47,11 +47,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 
 # Install dependencies using uv with GPU support (excluding onnxruntime)
 # Note: We exclude onnxruntime since we'll install our custom-built onnxruntime
-RUN uv sync --frozen --no-install-project --no-dev --extra gpu
+RUN uv sync --no-install-project --no-dev --extra gpu
 
 # Copy the custom-built onnxruntime wheel from the builder stage
 COPY --from=onnx-builder /tmp/onnxruntime/build/Linux/Release/dist/*.whl /tmp/

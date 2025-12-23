@@ -8,10 +8,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 
-# Install dependencies using uv with GPU support
-RUN uv sync --frozen --no-install-project --no-dev --extra gpu
+# Create virtual environment and install dependencies (CPU-only, no GPU extras)
+RUN uv venv && \
+    uv pip compile pyproject.toml --no-deps -o requirements.txt && \
+    uv pip install -r requirements.txt
 
 # Production stage
 FROM python:3.12-slim AS runtime
