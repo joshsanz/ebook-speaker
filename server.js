@@ -657,7 +657,6 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
  */
 app.get('/api/tts/voices', async (req, res) => {
     try {
-        const { default: fetch } = await import('node-fetch');
         const ttsResponse = await fetch(`${TTS_SERVICE_URL}/v1/audio/voices`);
 
         if (!ttsResponse.ok) {
@@ -687,7 +686,6 @@ app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
         }
 
         // Forward request to TTS server
-        const { default: fetch } = await import('node-fetch');
         const ttsResponse = await fetch(`${TTS_SERVICE_URL}/v1/audio/speech`, {
             method: 'POST',
             headers: {
