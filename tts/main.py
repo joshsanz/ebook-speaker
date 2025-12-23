@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import Any, cast
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -42,6 +43,7 @@ def signal_handler(signum, frame):
     shutdown_event.set()
     # Exit after a short delay to allow current requests to complete
     import threading
+
     def delayed_exit():
         import time
         time.sleep(2)  # Wait 2 seconds for current requests
@@ -85,7 +87,8 @@ def find_model_files():
     print("🔍 Checking for required model files...")
 
     # Model file patterns
-    model_patterns = ["kokoro-v1.0.fp16.onnx", "kokoro-v1.0.onnx", "kokoro.onnx", "model_quantized.onnx"]
+    model_patterns = ["kokoro-v1.0.fp16.onnx",
+                      "kokoro-v1.0.onnx", "kokoro.onnx", "model_quantized.onnx"]
     voice_patterns = ["voices-v1.0.bin", "voices.bin"]
 
     model_name = None
@@ -186,9 +189,11 @@ def patch_kokoro_float_inputs(model):
             phonemes = phonemes[:MAX_PHONEME_LENGTH]
 
         tokens_dtype = np.float32 if needs_float_input_ids else np.int64
-        tokens = np.array(self.tokenizer.tokenize(phonemes), dtype=tokens_dtype)
+        tokens = np.array(self.tokenizer.tokenize(
+            phonemes), dtype=tokens_dtype)
         assert len(tokens) <= MAX_PHONEME_LENGTH, (
-            f"Context length is {MAX_PHONEME_LENGTH}, but leave room for the pad token 0 at the start & end"
+            f"Context length is {
+                MAX_PHONEME_LENGTH}, but leave room for the pad token 0 at the start & end"
         )
 
         voice = voice[len(tokens)]
@@ -217,25 +222,27 @@ async def lifespan(app: FastAPI):
         model, voices = find_model_files()
 
         # Create ONNX session to select an accelerator (CoreML/CUDA) if available
-        providers = ort.get_available_providers()
+        providers = ort.get_available_providers()  # type: ignore[attr-defined]
         print("Available EPs:", ", ".join(providers))
 
         # Remove TensorRT provider while debugging errors it causes
-        providers = [provider for provider in providers if provider != "TensorrtExecutionProvider"]
+        providers = [provider for provider in providers if provider !=
+                     "TensorrtExecutionProvider"]
         print("Filtered EPs (TensorRT removed):", ", ".join(providers))
 
         if "CUDAExecutionProvider" in providers:
             # Apply CUDA conv algo search performance tweak by modifying the provider in place
             providers = [provider if provider != "CUDAExecutionProvider"
-                        else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "EXHAUSTIVE"})
-                        for provider in providers]
+                         else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "EXHAUSTIVE"})
+                         for provider in providers]
 
         print("Using inference engines", providers)
 
-        sess_opts = ort.SessionOptions()
+        sess_opts = ort.SessionOptions()  # type: ignore[attr-defined]
         cpu_count = os.cpu_count()
         sess_opts.intra_op_num_threads = cpu_count
-        session = ort.InferenceSession(model, session_options=sess_opts, providers=providers)
+        session = ort.InferenceSession(
+            model, session_options=sess_opts, providers=providers)
 
         # Initialize TTS model
         tts_model = kokoro_onnx.Kokoro.from_session(session, voices)
@@ -266,7 +273,7 @@ app = FastAPI(
 
 # Configure CORS
 app.add_middleware(
-    CORSMiddleware,
+    cast(Any, CORSMiddleware),
     allow_origins=["*"],  # In production, specify your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
@@ -288,11 +295,16 @@ async def shutdown_middleware(request, call_next):
 
 
 class SpeechRequest(BaseModel):
-    model: str = Field(default=DEFAULT_TTS_MODEL, description="TTS model to use")
-    input: str = Field(..., min_length=1, max_length=4096, description="Text to convert to speech")
-    voice: str = Field(default="af_heart", description="Voice to use for speech synthesis")
-    response_format: str = Field(default="wav", description="Audio format (wav only)")
-    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5 to 2.0)")
+    model: str = Field(default=DEFAULT_TTS_MODEL,
+                       description="TTS model to use")
+    input: str = Field(..., min_length=1, max_length=4096,
+                       description="Text to convert to speech")
+    voice: str = Field(default="af_heart",
+                       description="Voice to use for speech synthesis")
+    response_format: str = Field(
+        default="wav", description="Audio format (wav only)")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0,
+                         description="Speech speed (0.5 to 2.0)")
 
 
 class VoiceResponse(BaseModel):
@@ -427,7 +439,8 @@ async def health_check():
 async def get_voices():
     """Get list of available voices"""
     if tts_model is None:
-        raise HTTPException(status_code=500, detail="TTS model not initialized")
+        raise HTTPException(
+            status_code=500, detail="TTS model not initialized")
 
     try:
         voices = tts_model.get_voices()
@@ -443,14 +456,16 @@ async def get_voices():
         return voice_responses
     except Exception as e:
         print(f"Error getting voices: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve voices")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve voices")
 
 
 @app.get("/v1/audio/languages", response_model=list[LanguageResponse])
 async def get_languages():
     """Get list of supported languages"""
     if tts_model is None:
-        raise HTTPException(status_code=500, detail="TTS model not initialized")
+        raise HTTPException(
+            status_code=500, detail="TTS model not initialized")
 
     try:
         # Get languages from available voices
@@ -477,7 +492,8 @@ async def get_languages():
         }
 
         for lang_code in sorted(languages):
-            name, native_name = lang_names.get(lang_code, (lang_code.upper(), lang_code.upper()))
+            name, native_name = lang_names.get(
+                lang_code, (lang_code.upper(), lang_code.upper()))
             lang_responses.append(LanguageResponse(
                 code=lang_code,
                 name=name,
@@ -487,7 +503,8 @@ async def get_languages():
         return lang_responses
     except Exception as e:
         print(f"Error getting languages: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve languages")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve languages")
 
 
 @app.post("/v1/audio/speech")
@@ -530,7 +547,8 @@ async def text_to_speech(request: SpeechRequest):
         if request.voice not in available_voices:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid voice '{request.voice}'. Available voices: {available_voices}"
+                detail=f"Invalid voice '{
+                    request.voice}'. Available voices: {available_voices}"
             )
 
         # Check again before starting generation (in case shutdown was requested)
