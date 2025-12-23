@@ -15,6 +15,7 @@ import signal
 import sys
 import asyncio
 from threading import Event
+from kokoro_onnx.config import MAX_PHONEME_LENGTH, SAMPLE_RATE
 
 
 # Initialize Kokoro TTS
@@ -24,6 +25,15 @@ ASSETS_DIR = os.environ.get(
     "TTS_ASSETS_DIR",
     os.path.abspath(os.path.join(os.path.dirname(__file__), "assets"))
 )
+ALLOWED_MODEL_FAMILIES = ["kokoro"]
+DEFAULT_TTS_MODEL = os.environ.get("TTS_DEFAULT_MODEL", "kokoro")
+if DEFAULT_TTS_MODEL not in ALLOWED_MODEL_FAMILIES:
+    print(
+        "⚠️  TTS_DEFAULT_MODEL is not supported, falling back to 'kokoro': "
+        f"{DEFAULT_TTS_MODEL}"
+    )
+    DEFAULT_TTS_MODEL = "kokoro"
+TTS_MODEL_FILE = os.environ.get("TTS_MODEL_FILE")
 
 
 def signal_handler(signum, frame):
@@ -80,10 +90,17 @@ def find_model_files():
 
     model_name = None
     voice_name = None
+    requested_model = None
+
+    if TTS_MODEL_FILE:
+        requested_model = os.path.basename(TTS_MODEL_FILE)
+        model_patterns = [requested_model]
+        print(f"🎯 TTS_MODEL_FILE set, requesting model: {requested_model}")
 
     # Check assets directory first (persistent volume target)
     os.makedirs(ASSETS_DIR, exist_ok=True)
     search_dirs = [ASSETS_DIR, "/app/models", os.getcwd()]
+    model_search_dirs = [ASSETS_DIR] if requested_model else search_dirs
 
     for directory in search_dirs:
         if not os.path.exists(directory):
@@ -94,7 +111,7 @@ def find_model_files():
 
         directory_files = os.listdir(directory)
 
-        if not model_name:
+        if not model_name and directory in model_search_dirs:
             for pattern in model_patterns:
                 if pattern in directory_files:
                     model_path = os.path.join(directory, pattern)
@@ -114,8 +131,8 @@ def find_model_files():
     if not model_name or not voice_name:
         print("📥 Model files not found locally, downloading...")
         # Other defaults available:
-        # model_*.onnx for quantized, fp16, q4, q4f16, q8f16, uint8, uint8f16
-        default_model = "model_quantized.onnx"
+        # model*.onnx for _quantized, _fp16, _q4, _q4f16, _q8f16, _uint8, _uint8f16, and ''
+        default_model = requested_model or "model_quantized.onnx"
         default_voices = "voices-v1.0.bin"
 
         files_to_download = []
@@ -153,6 +170,40 @@ def find_model_files():
     return model_name, voice_name
 
 
+def patch_kokoro_float_inputs(model):
+    inputs = {inp.name: inp.type for inp in model.sess.get_inputs()}
+    input_ids_type = inputs.get("input_ids")
+    speed_type = inputs.get("speed")
+    if not input_ids_type:
+        return
+    needs_float_input_ids = "float" in input_ids_type
+    needs_float_speed = speed_type and "float" in speed_type
+    if not needs_float_input_ids and not needs_float_speed:
+        return
+
+    def _create_audio_float(self, phonemes, voice, speed):
+        if len(phonemes) > MAX_PHONEME_LENGTH:
+            phonemes = phonemes[:MAX_PHONEME_LENGTH]
+
+        tokens_dtype = np.float32 if needs_float_input_ids else np.int64
+        tokens = np.array(self.tokenizer.tokenize(phonemes), dtype=tokens_dtype)
+        assert len(tokens) <= MAX_PHONEME_LENGTH, (
+            f"Context length is {MAX_PHONEME_LENGTH}, but leave room for the pad token 0 at the start & end"
+        )
+
+        voice = voice[len(tokens)]
+        tokens = [[0, *tokens, 0]]
+
+        audio = self.sess.run(None, {
+            "input_ids": tokens,
+            "style": np.array(voice, dtype=np.float32),
+            "speed": np.array([speed], dtype=np.float32 if needs_float_speed else np.int32),
+        })[0]
+        return audio, SAMPLE_RATE
+
+    model._create_audio = _create_audio_float.__get__(model, type(model))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application lifespan events"""
@@ -188,6 +239,7 @@ async def lifespan(app: FastAPI):
 
         # Initialize TTS model
         tts_model = kokoro_onnx.Kokoro.from_session(session, voices)
+        patch_kokoro_float_inputs(tts_model)
         print("🎵 TTS model initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize TTS model: {e}")
@@ -236,7 +288,7 @@ async def shutdown_middleware(request, call_next):
 
 
 class SpeechRequest(BaseModel):
-    model: str = Field(default="kokoro", description="TTS model to use")
+    model: str = Field(default=DEFAULT_TTS_MODEL, description="TTS model to use")
     input: str = Field(..., min_length=1, max_length=4096, description="Text to convert to speech")
     voice: str = Field(default="af_heart", description="Voice to use for speech synthesis")
     response_format: str = Field(default="wav", description="Audio format (wav only)")
@@ -450,10 +502,13 @@ async def text_to_speech(request: SpeechRequest):
         )
 
     # Validate model
-    if request.model != "kokoro":
+    if request.model not in ALLOWED_MODEL_FAMILIES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid model '{request.model}'. Only 'kokoro' is supported."
+            detail=(
+                f"Invalid model '{request.model}'. "
+                f"Only {', '.join(ALLOWED_MODEL_FAMILIES)} is supported."
+            )
         )
 
     # Validate response format

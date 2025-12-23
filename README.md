@@ -160,6 +160,8 @@ If you prefer to run the services manually:
 
 The application expects a TTS service to be running at `http://localhost:5005`. You can configure the URL of the TTS service by setting the `TTS_SERVICE_URL` environment variable in the `docker-compose.yml` file or in your environment.
 
+To select a specific model file (for example `model_quantized.onnx` or `kokoro-v1.0.fp16.onnx`), set `TTS_MODEL_FILE` for the Python TTS service. The file is expected under the TTS assets directory and will be downloaded if missing.
+
 ### Port
 
 The server runs on port 3001 by default. You can change this by setting the `PORT` environment variable.
