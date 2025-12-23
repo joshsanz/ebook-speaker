@@ -94,19 +94,26 @@ The data flow for TTS is as follows:
 
 ## Running the Application
 
-### Development Mode (Recommended)
+### Full System with Docker (Recommended)
 
-This will start the Node.js server, the React client, and the Python TTS service.
+This will start the Node.js server, build the React client, and run the Python TTS service.
 
 ```bash
 docker-compose up --build
 ```
 
-- Server runs on `http://localhost:3001`
-- Client runs on `http://localhost:3000`
-- TTS Service runs on `http://localhost:5005`
+- Web UI + API: `http://localhost:3001`
+- TTS Service: `http://localhost:5005`
 
-### Manual Development
+GPU/CPU variants are available:
+
+```bash
+docker-compose -f docker-compose.cpu.yml up --build
+docker-compose -f docker-compose.gpu.yml up --build
+docker-compose -f docker-compose.coreml.yml up --build
+```
+
+### Full System without Docker (Local Dev)
 
 If you prefer to run the services manually:
 
@@ -117,17 +124,16 @@ If you prefer to run the services manually:
     uvicorn main:app --reload --port 5005
     ```
 
-2.  **Start the Backend Server:**
+2.  **Start the Backend + Frontend:**
 
     ```bash
-    npm start
+    npm run dev
     ```
 
-3.  **Start the Frontend Client:**
+    - API runs on `http://localhost:3001`
+    - Client runs on `http://localhost:3000`
 
-    ```bash
-    npm run client
-    ```
+If your TTS service is not at `http://localhost:5005`, set `TTS_SERVICE_URL` before starting the server.
 
 ## Usage
 
@@ -198,7 +204,7 @@ ebook-speaker/
 
 ## Docker
 
-The easiest way to run the application is with Docker Compose.
+The easiest way to run the full system is with Docker Compose.
 
 1.  **Build and run the containers:**
 
@@ -206,11 +212,11 @@ The easiest way to run the application is with Docker Compose.
     docker-compose up --build
     ```
 
-    This will build the `ebook-speaker` image and start both the `app` and `tts` services.
+    This will build the `ebook-speaker` image and start the server, client build, and TTS services.
 
 2.  **Access the application:**
 
-    The application will be available at `http://localhost:3000`.
+    The application will be available at `http://localhost:3001`.
 
 ## Contributing
 

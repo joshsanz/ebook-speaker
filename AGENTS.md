@@ -1,10 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `server.js` and `shared/`, `utils/`, `tts/` hold the Express API, shared text-processing helpers, security utilities, and FastAPI TTS microservice.
-- `client/` contains the Vite/React UI (`src/components`, `src/hooks`, `src/contexts`) plus static assets in `public/`.
-- `data/` stores uploaded EPUB files; keep large samples out of Git.
-- Integration aids live at the root: `docker-compose*.yml`, `Dockerfile`, and standalone diagnostics (`debug-chapter-extraction.js`, `test-*.js`).
+- `server.js` is the Express API entry; routing, upload handling, and the build-time React bundle live here.
+- `shared/` holds text-processing utilities shared by server and client (sentence splitting, voice normalization, EPUB parsing helpers).
+- `utils/` contains backend-only helpers (validation, sanitization, auth/limits) and should stay CommonJS.
+- `tts/` is the FastAPI microservice plus model config; use this when touching Kokoro voice pipelines.
+- `client/` is the Vite/React UI.
+  - `client/src/components/` for UI pieces, `client/src/hooks/` for playback/TTS state, `client/src/contexts/` for global state.
+  - `client/src/assets/` for bundled images; `public/` for static files served as-is.
+- `data/` stores uploaded EPUB files and extraction artifacts; keep large samples out of Git.
+- Root scripts: `epub-reader.js` for parsing experiments, `debug-chapter-extraction.js` for extraction diagnostics, `test-*.js` for sanity checks.
+- Integration aids live at the root: `docker-compose*.yml`, `Dockerfile`, and `README-docker.md`.
 
 ## Build, Test, and Development Commands
 - `npm run dev` — concurrently launches the Express API on 3001 and the React dev server on 3000 with hot reload.
