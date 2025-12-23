@@ -20,6 +20,10 @@ from threading import Event
 # Initialize Kokoro TTS
 tts_model = None
 shutdown_event = Event()
+ASSETS_DIR = os.environ.get(
+    "TTS_ASSETS_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "assets"))
+)
 
 
 def signal_handler(signum, frame):
@@ -67,73 +71,72 @@ def download_file_if_missing(url: str, filename: str) -> bool:
 
 
 def find_model_files():
-    """Find model files, checking mounted directory first, then current directory, then download"""
+    """Find model files, checking assets directory first, then fallbacks, then download"""
     print("🔍 Checking for required model files...")
 
     # Model file patterns
-    model_patterns = ["kokoro-v1.0.fp16.onnx", "kokoro-v1.0.onnx", "kokoro.onnx"]
+    model_patterns = ["kokoro-v1.0.fp16.onnx", "kokoro-v1.0.onnx", "kokoro.onnx", "model_quantized.onnx"]
     voice_patterns = ["voices-v1.0.bin", "voices.bin"]
 
     model_name = None
     voice_name = None
 
-    # Check mounted models directory first
-    mounted_dir = "/app/models"
-    if os.path.exists(mounted_dir):
-        print("📁 Checking mounted models directory...")
-        mounted_files = os.listdir(mounted_dir)
+    # Check assets directory first (persistent volume target)
+    os.makedirs(ASSETS_DIR, exist_ok=True)
+    search_dirs = [ASSETS_DIR, "/app/models", os.getcwd()]
 
-        # Look for model files
-        for pattern in model_patterns:
-            if pattern in mounted_files:
-                model_path = os.path.join(mounted_dir, pattern)
-                print(f"✓ Found mounted model: {pattern}")
-                model_name = model_path
-                break
+    for directory in search_dirs:
+        if not os.path.exists(directory):
+            continue
 
-        # Look for voice files
-        for pattern in voice_patterns:
-            if pattern in mounted_files:
-                voice_path = os.path.join(mounted_dir, pattern)
-                print(f"✓ Found mounted voices: {pattern}")
-                voice_name = voice_path
-                break
+        if directory == ASSETS_DIR:
+            print(f"📁 Checking assets directory: {ASSETS_DIR}")
 
-    # Check current directory if not found in mounted dir
-    if not model_name:
-        for pattern in model_patterns:
-            if os.path.exists(pattern):
-                print(f"✓ Found local model: {pattern}")
-                model_name = pattern
-                break
+        directory_files = os.listdir(directory)
 
-    if not voice_name:
-        for pattern in voice_patterns:
-            if os.path.exists(pattern):
-                print(f"✓ Found local voices: {pattern}")
-                voice_name = pattern
-                break
+        if not model_name:
+            for pattern in model_patterns:
+                if pattern in directory_files:
+                    model_path = os.path.join(directory, pattern)
+                    print(f"✓ Found model: {model_path}")
+                    model_name = model_path
+                    break
+
+        if not voice_name:
+            for pattern in voice_patterns:
+                if pattern in directory_files:
+                    voice_path = os.path.join(directory, pattern)
+                    print(f"✓ Found voices: {voice_path}")
+                    voice_name = voice_path
+                    break
 
     # Download if still not found
     if not model_name or not voice_name:
         print("📥 Model files not found locally, downloading...")
-        default_model = "kokoro-v1.0.fp16.onnx"
+        # Other defaults available:
+        # model_*.onnx for quantized, fp16, q4, q4f16, q8f16, uint8, uint8f16
+        default_model = "model_quantized.onnx"
         default_voices = "voices-v1.0.bin"
 
         files_to_download = []
         if not model_name:
+            model_path = os.path.join(ASSETS_DIR, default_model)
             files_to_download.append({
-                "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_model}",
-                "filename": default_model
+                "url": (
+                    "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/"
+                    f"resolve/main/onnx/{default_model}"
+                ),
+                "filename": model_path
             })
-            model_name = default_model
+            model_name = model_path
 
         if not voice_name:
+            voice_path = os.path.join(ASSETS_DIR, default_voices)
             files_to_download.append({
                 "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_voices}",
-                "filename": default_voices
+                "filename": voice_path
             })
-            voice_name = default_voices
+            voice_name = voice_path
 
         all_files_present = True
         for file_info in files_to_download:

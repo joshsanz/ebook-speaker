@@ -152,9 +152,10 @@ curl -X POST http://localhost:5005/v1/audio/speech \
    uv pip install -e .
    ```
 
-2. **Model Files**: The service will automatically download required model files on first startup:
+2. **Model Files**: The service will automatically download required model files on first startup (stored in `assets/` by default):
    - `kokoro-v1.0.onnx` - TTS model (downloaded from GitHub releases)
    - `voices-v1.0.bin` - Voice definitions (downloaded from GitHub releases)
+   - Set `TTS_ASSETS_DIR` to override the storage location (e.g., `/app/assets` in containers)
 
 3. Run the service:
 

@@ -11,6 +11,7 @@ services:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TTS_ASSETS_DIR=/app/assets
     runtime: nvidia
     deploy:
       resources:
@@ -33,5 +34,8 @@ services:
       start_period: 60s  # Increased for GPU initialization
     restart: unless-stopped
     volumes:
-      # Optional: Mount for model caching
-      - ./models:/app/models:ro
+      - tts-assets:/app/assets
+
+volumes:
+  tts-assets:
+    driver: local

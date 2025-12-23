@@ -47,6 +47,7 @@ services:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TTS_ASSETS_DIR=/app/assets
     runtime: nvidia
     deploy:
       resources:
@@ -61,7 +62,7 @@ services:
           memory: 4G
           cpus: '2.0'
     volumes:
-      - tts-models:/app/models
+      - tts-assets:/app/assets
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s
@@ -81,5 +82,5 @@ networks:
 volumes:
   ebook-data:
     driver: local
-  tts-models:
+  tts-assets:
     driver: local

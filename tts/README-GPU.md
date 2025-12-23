@@ -123,7 +123,7 @@ This directory contains Docker configurations for building the TTS service with 
 
 ```yaml
 volumes:
-  - ./models:/app/models:ro  # Model cache
+  - tts-assets:/app/assets   # Model cache (persistent volume)
   - ./logs:/app/logs         # Application logs
 ```
 

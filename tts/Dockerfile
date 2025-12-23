@@ -37,7 +37,8 @@ COPY --from=builder /app/.venv /app/.venv
 COPY main.py entrypoint.sh ./
 
 # Set proper ownership and permissions
-RUN chown -R appuser:appuser /app && \
+RUN mkdir -p /app/assets && \
+    chown -R appuser:appuser /app && \
     chmod +x /app/main.py && \
     chmod +x /app/entrypoint.sh
 

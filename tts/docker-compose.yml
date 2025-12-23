@@ -9,6 +9,7 @@ services:
       - "5005:5005"
     environment:
       - PYTHONUNBUFFERED=1
+      - TTS_ASSETS_DIR=/app/assets
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s
@@ -16,6 +17,8 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    volumes:
+      - tts-assets:/app/assets
     # Resource limits (doubled for better performance)
     deploy:
       resources:
@@ -25,3 +28,7 @@ services:
         reservations:
           memory: 512M
           cpus: '0.5'
+
+volumes:
+  tts-assets:
+    driver: local

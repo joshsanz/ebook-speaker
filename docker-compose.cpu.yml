@@ -45,8 +45,9 @@ services:
       - "0.0.0.0:5005:5005"
     environment:
       - PYTHONUNBUFFERED=1
+      - TTS_ASSETS_DIR=/app/assets
     volumes:
-      - tts-models:/app/models
+      - tts-assets:/app/assets
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
       interval: 30s
@@ -74,5 +75,5 @@ networks:
 volumes:
   ebook-data:
     driver: local
-  tts-models:
+  tts-assets:
     driver: local

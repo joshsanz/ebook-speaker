@@ -10,6 +10,7 @@ services:
       - "5005:5005"
     environment:
       - PYTHONUNBUFFERED=1
+      - TTS_ASSETS_DIR=/app/assets
     deploy:
       resources:
         limits:
@@ -26,5 +27,8 @@ services:
       start_period: 60s  # Increased for CoreML initialization
     restart: unless-stopped
     volumes:
-      # Optional: Mount for model caching
-      - ./models:/app/models:ro
+      - tts-assets:/app/assets
+
+volumes:
+  tts-assets:
+    driver: local
