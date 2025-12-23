@@ -24,7 +24,7 @@ const SENTENCE_PATH = process.env.TTS_BENCHMARK_SENTENCES || DEFAULT_SENTENCE_PA
 const BASE_URL = (process.env.TTS_BENCHMARK_BASE_URL || 'http://localhost:5005').replace(/\/$/, '');
 const ENDPOINT = `${BASE_URL}/v1/audio/speech`;
 const MODEL = process.env.TTS_BENCHMARK_MODEL || 'kokoro';
-const VOICE = process.env.TTS_BENCHMARK_VOICE || 'mia';
+const VOICE = process.env.TTS_BENCHMARK_VOICE || 'af_heart';
 const SPEED = parseFloat(process.env.TTS_BENCHMARK_SPEED || '1.0');
 
 function loadSentences(filePath) {
@@ -124,7 +124,10 @@ async function measureSentence(fetch, sentence) {
 }
 
 async function main() {
-  const { default: fetch } = await import('node-fetch');
+  if (!globalThis.fetch) {
+    throw new Error('Global fetch is unavailable. Use Node 18+ to run this script.');
+  }
+  const fetch = globalThis.fetch.bind(globalThis);
   const sentencesByCategory = loadSentences(SENTENCE_PATH);
 
   console.log('==============================================');

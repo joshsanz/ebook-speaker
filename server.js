@@ -15,6 +15,8 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const cors = require('cors');
 const { processForTTSAndHighlighting } = require('./shared/textProcessing.js');
 const multer = require('multer');
@@ -711,8 +713,13 @@ app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
             'X-TTS-Cache': res.get('X-TTS-Cache') || 'MISS'
         });
 
+        if (!ttsResponse.body) {
+            throw new Error('TTS server returned empty response body');
+        }
+
         // Stream the audio response
-        ttsResponse.body.pipe(res);
+        const readable = Readable.fromWeb(ttsResponse.body);
+        await pipeline(readable, res);
 
     } catch (error) {
         log.error('TTS proxy error:', error);
