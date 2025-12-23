@@ -93,7 +93,7 @@ def find_model_files():
     requested_model = None
 
     if TTS_MODEL_FILE:
-        requested_model = os.path.basename(TTS_MODEL_FILE)
+        requested_model = os.path.basename(TTS_MODEL_FILE.strip().strip("\""))
         model_patterns = [requested_model]
         print(f"🎯 TTS_MODEL_FILE set, requesting model: {requested_model}")
 

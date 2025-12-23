@@ -47,6 +47,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TTS_ASSETS_DIR=/app/assets
+      - TTS_MODEL_FILE="model.onnx"
     volumes:
       # Persist downloaded model assets across restarts
       - tts-assets:/app/assets
@@ -66,10 +67,10 @@ services:
       resources:
         limits:
           memory: 2G
-          cpus: '4.0'
+          cpus: 4.0
         reservations:
           memory: 512M
-          cpus: '0.5'
+          cpus: 0.5
 
 networks:
   ebook-speaker:

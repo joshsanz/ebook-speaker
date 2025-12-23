@@ -144,7 +144,7 @@ async function main() {
     let totalRtf = 0;
     let completed = 0;
 
-    for (let i = 0; i < sentences.length; i++) {
+    for (let i = 0; i < 3; i++){//sentences.length; i++) {
       const sentence = sentences[i];
       try {
         const result = await measureSentence(fetch, sentence);
@@ -160,7 +160,9 @@ async function main() {
           `${formatSeconds(result.audioDurationSeconds)} audio`,
           '| RTF',
           result.realTimeFactor.toFixed(2),
-          `| ${result.bytes} bytes`
+          '|',
+          (result.bytes / 1024).toFixed(2),
+          'kB'
         );
       } catch (error) {
         console.error(`#${i + 1} ERROR:`, error.message);

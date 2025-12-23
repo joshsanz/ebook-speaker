@@ -1,7 +1,7 @@
 [project]
 name = "tts"
 version = "0.1.0"
-description = "Add your description here"
+description = "A FastAPI server for text-to-speech generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,15 +10,10 @@ dependencies = [
     "pydantic>=2.11.7",
     "uvicorn>=0.35.0",
     "requests>=2.31.0",
+    # Uncomment the appropriate combination of packages for GPU vs CPU builds
     "onnxruntime>=1.16.0",
+    # "onnxruntime-gpu>=1.16.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # "tensorrt-cu12>=10.13.2.6; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
-[project.optional-dependencies]
-gpu = [
-    "onnxruntime-gpu>=1.16.0; platform_machine == 'x86_64'",
-    "tensorrt-cu12>=10.13.2.6; platform_machine == 'x86_64'",
-]
 
-[tool.uv]
-# Don't resolve optional dependencies by default
-environments = ["platform_machine != 'aarch64' or extra != 'gpu'"]
