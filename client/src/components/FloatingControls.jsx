@@ -1,4 +1,5 @@
 import React from 'react';
+import ModelSelector from './ModelSelector.jsx';
 import VoiceSelector from './VoiceSelector.jsx';
 import SpeedSelector from './SpeedSelector.jsx';
 
@@ -10,6 +11,8 @@ const FloatingControls = ({
   setControlsHidden,
   autoAdvanceEnabled,
   handleAutoAdvanceToggle,
+  selectedModel,
+  handleModelSelectionChange,
   voices,
   groupedVoices,
   selectedVoice,
@@ -46,6 +49,12 @@ const FloatingControls = ({
         >
           Auto-Advance: {autoAdvanceEnabled ? 'ON' : 'OFF'}
         </button>
+
+        <ModelSelector
+          selectedModel={selectedModel}
+          onModelChange={handleModelSelectionChange}
+          disabled={isLoadingAudio}
+        />
 
         <VoiceSelector
           voices={voices}

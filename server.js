@@ -15,17 +15,16 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
-const { Readable } = require('stream');
-const { pipeline } = require('stream/promises');
+const crypto = require('crypto');
 const cors = require('cors');
-const { processForTTSAndHighlighting } = require('./shared/textProcessing.js');
+const { processForTTSAndHighlighting, splitIntoPronounceable } = require('./shared/textProcessing.js');
 const multer = require('multer');
 const fileUpload = require('express-fileupload');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const log = require('loglevel');
 const EpubReader = require('./epub-reader');
-const apicache = require('apicache');
+const { createClient } = require('redis');
 const { validateFilename, createSecurePath, validateFileAccess } = require('./utils/security');
 const { sanitizeEpubHtml, analyzeHtmlSecurity } = require('./utils/htmlSanitizer');
 const { 
@@ -42,7 +41,10 @@ const {
 // Server configuration
 const PORT = process.env.PORT || 3001;
 const TTS_SERVICE_URL = process.env.TTS_SERVICE_URL || 'http://localhost:5005';
-const TTS_CACHE_DURATION = '15 minutes';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const TTS_CACHE_TTL_SECONDS = Number.parseInt(process.env.TTS_CACHE_TTL_SECONDS || '86400', 10);
+const TTS_LOCK_TTL_SECONDS = Number.parseInt(process.env.TTS_LOCK_TTL_SECONDS || '60', 10);
+const TTS_PREFETCH_COUNT = Number.parseInt(process.env.TTS_PREFETCH_COUNT || '15', 10);
 const DATA_DIR = path.join(__dirname, 'data');
 const CLIENT_BUILD_DIR = path.join(__dirname, 'client/build');
 
@@ -66,6 +68,246 @@ if (process.env.NODE_ENV === 'production') {
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
+const QUEUE_BOOK_SET_KEY = 'queue:tts:books';
+const PREFETCH_QUEUE_PREFIX = 'queue:tts:prefetch:';
+const CHAPTER_QUEUE_PREFIX = 'queue:tts:chapter:';
+const TTS_CACHE_KEY_PREFIX = 'tts:';
+const TTS_LOCK_KEY_PREFIX = 'lock:tts:';
+const LOCK_RELEASE_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+`;
+
+let redisReady = false;
+let ttsQueueWorkerStarted = false;
+const redisClient = createClient({ url: REDIS_URL });
+
+redisClient.on('error', (error) => {
+    redisReady = false;
+    log.error('Redis error:', error);
+});
+
+redisClient.on('ready', () => {
+    redisReady = true;
+    log.info(`Redis connected: ${REDIS_URL}`);
+    startTtsQueueWorker();
+});
+
+redisClient.connect().catch((error) => {
+    redisReady = false;
+    log.error('Failed to connect to Redis:', error);
+});
+
+function encodeBookId(bookId) {
+    return encodeURIComponent(bookId || 'unknown');
+}
+
+function getPrefetchQueueKey(bookId) {
+    return `${PREFETCH_QUEUE_PREFIX}${encodeBookId(bookId)}`;
+}
+
+function getChapterQueueKey(bookId) {
+    return `${CHAPTER_QUEUE_PREFIX}${encodeBookId(bookId)}`;
+}
+
+function createSentenceHash(sentence) {
+    return crypto.createHash('sha256').update(sentence, 'utf8').digest('hex');
+}
+
+function getTtsCacheKey({ bookId, model, voice, speed, sentence }) {
+    const normalizedSentence = (sentence || '').trim();
+    const sentenceHash = createSentenceHash(normalizedSentence);
+    const normalizedModel = model || 'kokoro';
+    const normalizedVoice = voice || 'default';
+    const normalizedSpeed = typeof speed === 'number' ? speed.toFixed(2) : String(speed || '1.00');
+    return `${TTS_CACHE_KEY_PREFIX}${encodeBookId(bookId)}:${normalizedModel}:${normalizedVoice}:${normalizedSpeed}:${sentenceHash}`;
+}
+
+function getTtsLockKey({ bookId, model, voice, speed, sentence }) {
+    const cacheKey = getTtsCacheKey({ bookId, model, voice, speed, sentence });
+    return `${TTS_LOCK_KEY_PREFIX}${cacheKey.slice(TTS_CACHE_KEY_PREFIX.length)}`;
+}
+
+function redisSupportsBuffers() {
+    return typeof redisClient.getBuffer === 'function';
+}
+
+async function getCachedAudio(key) {
+    if (!redisReady) {
+        return null;
+    }
+
+    if (redisSupportsBuffers()) {
+        return await redisClient.getBuffer(key);
+    }
+
+    const value = await redisClient.get(key);
+    if (!value) {
+        return null;
+    }
+
+    return Buffer.from(value, 'base64');
+}
+
+async function setCachedAudio(key, audioBuffer) {
+    if (!redisReady) {
+        return;
+    }
+
+    if (redisSupportsBuffers()) {
+        await redisClient.set(key, audioBuffer, { EX: TTS_CACHE_TTL_SECONDS });
+        return;
+    }
+
+    await redisClient.set(key, audioBuffer.toString('base64'), { EX: TTS_CACHE_TTL_SECONDS });
+}
+
+async function releaseLock(lockKey, token) {
+    if (!redisReady) {
+        return;
+    }
+
+    try {
+        await redisClient.eval(LOCK_RELEASE_SCRIPT, {
+            keys: [lockKey],
+            arguments: [token]
+        });
+    } catch (error) {
+        log.warn('Failed to release Redis lock:', error);
+    }
+}
+
+function getPronounceableSentences(cleanTextContent) {
+    return splitIntoPronounceable(cleanTextContent)
+        .filter((item) => item.pronounceable)
+        .map((item) => item.text);
+}
+
+async function getChapterSentences(reader, chapterId) {
+    const rawContent = await reader.getChapterContent(chapterId);
+    const cleanTextContent = reader.cleanHtmlContent(rawContent);
+    return getPronounceableSentences(cleanTextContent);
+}
+
+async function enqueueSentences(queueKey, payloads) {
+    if (!redisReady || payloads.length === 0) {
+        return 0;
+    }
+
+    await redisClient.rPush(queueKey, payloads);
+    return payloads.length;
+}
+
+async function clearBookQueues(bookId) {
+    if (!redisReady) {
+        return;
+    }
+
+    const encodedBookId = encodeBookId(bookId);
+    await redisClient.del(`${PREFETCH_QUEUE_PREFIX}${encodedBookId}`, `${CHAPTER_QUEUE_PREFIX}${encodedBookId}`);
+    await redisClient.sRem(QUEUE_BOOK_SET_KEY, encodedBookId);
+}
+
+async function markBookQueued(bookId) {
+    if (!redisReady) {
+        return;
+    }
+
+    await redisClient.sAdd(QUEUE_BOOK_SET_KEY, encodeBookId(bookId));
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function processQueueItem(job) {
+    if (!job || !job.sentence) {
+        return;
+    }
+
+    const cacheKey = getTtsCacheKey(job);
+    const existing = await getCachedAudio(cacheKey);
+    if (existing) {
+        return;
+    }
+
+    const lockKey = getTtsLockKey(job);
+    const token = crypto.randomUUID();
+    const lockResult = await redisClient.set(lockKey, token, { NX: true, EX: TTS_LOCK_TTL_SECONDS });
+    if (!lockResult) {
+        return;
+    }
+
+    try {
+        const ttsResponse = await fetch(`${TTS_SERVICE_URL}/v1/audio/speech`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: job.model || 'kokoro',
+                input: job.sentence,
+                voice: job.voice,
+                response_format: 'wav',
+                speed: job.speed || 1.0
+            })
+        });
+
+        if (!ttsResponse.ok) {
+            throw new Error(`TTS server error: ${ttsResponse.status} - ${ttsResponse.statusText}`);
+        }
+
+        const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+        if (audioBuffer.length === 0) {
+            throw new Error('TTS server returned empty audio');
+        }
+
+        await setCachedAudio(cacheKey, audioBuffer);
+    } catch (error) {
+        log.error('TTS queue job failed:', error);
+    } finally {
+        await releaseLock(lockKey, token);
+    }
+}
+
+async function startTtsQueueWorker() {
+    if (ttsQueueWorkerStarted || !redisReady) {
+        return;
+    }
+
+    ttsQueueWorkerStarted = true;
+    log.info('Starting Redis-backed TTS queue worker');
+
+    while (true) {
+        try {
+            const activeBooks = await redisClient.sMembers(QUEUE_BOOK_SET_KEY);
+            if (!activeBooks.length) {
+                await sleep(500);
+                continue;
+            }
+
+            const prefetchKeys = activeBooks.map((bookId) => `${PREFETCH_QUEUE_PREFIX}${bookId}`);
+            const chapterKeys = activeBooks.map((bookId) => `${CHAPTER_QUEUE_PREFIX}${bookId}`);
+            const queueKeys = [...prefetchKeys, ...chapterKeys];
+
+            const result = await redisClient.blPop(queueKeys, 1);
+            if (!result) {
+                continue;
+            }
+
+            const payload = Array.isArray(result) ? result[1] : result.element;
+            if (!payload) {
+                continue;
+            }
+            const job = JSON.parse(payload);
+            await processQueueItem(job);
+        } catch (error) {
+            log.error('TTS queue worker error:', error);
+            await sleep(500);
+        }
+    }
+}
 
 /**
  * Parse author name for directory structure (Last_First_Middle format)
@@ -175,17 +417,6 @@ app.get('/health', (req, res) => {
 // BOOK MANAGEMENT ROUTES
 // =============================================================================
 
-// Cache configuration for TTS endpoint - only cache successful responses
-const ttsCacheOptions = {
-    duration: TTS_CACHE_DURATION,
-    statusCodes: {
-        include: [200] // Only cache successful responses
-    },
-    headers: {
-        'X-TTS-Cache': 'HIT'
-    }
-};
-
 // Rate limiting configuration for file uploads
 const uploadRateLimit = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -224,30 +455,6 @@ const fileUploadConfig = {
 // Legacy multer support (keeping for now, may be used elsewhere)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-
-// Configure apicache for TTS responses
-const cache = apicache.middleware;
-
-// Configure apicache with custom key generation for TTS requests
-apicache.options({
-    appendKey: (req, res) => {
-        // Only customize cache key for TTS requests
-        if (req.url === '/api/tts/speech' && req.method === 'POST') {
-            const { model, input, voice, response_format, speed } = req.body;
-            const keyData = {
-                model: model || 'kokoro',
-                input: input || '',
-                voice: voice || '',
-                response_format: response_format || 'wav',
-                speed: speed || 1.0
-            };
-            return JSON.stringify(keyData);
-        }
-        
-        // For all other requests, no additional key
-        return '';
-    }
-});
 
 // Store active EPUB readers
 const epubReaders = new Map();
@@ -659,7 +866,12 @@ app.get('/api/books/:filename/chapters/:id', async (req, res) => {
  */
 app.get('/api/tts/voices', async (req, res) => {
     try {
-        const ttsResponse = await fetch(`${TTS_SERVICE_URL}/v1/audio/voices`);
+        const ttsUrl = new URL(`${TTS_SERVICE_URL}/v1/audio/voices`);
+        if (typeof req.query.model === 'string' && req.query.model) {
+            ttsUrl.searchParams.set('model', req.query.model);
+        }
+
+        const ttsResponse = await fetch(ttsUrl);
 
         if (!ttsResponse.ok) {
             throw new Error(`TTS server error: ${ttsResponse.status} - ${ttsResponse.statusText}`);
@@ -674,11 +886,144 @@ app.get('/api/tts/voices', async (req, res) => {
 });
 
 /**
+ * Enqueue sentences for current and next chapter (drops existing queues for this book)
+ */
+app.post('/api/tts/queue/chapter', async (req, res) => {
+    try {
+        if (!redisReady) {
+            return res.status(503).json({ error: 'Redis is unavailable' });
+        }
+
+        const { bookId, chapterId, model, voice, speed } = req.body;
+        if (!bookId || !chapterId || !voice) {
+            return res.status(400).json({ error: 'Missing required fields: bookId, chapterId, and voice are required' });
+        }
+
+        const filename = validateFilename(bookId, DATA_DIR);
+        const filePath = createSecurePath(DATA_DIR, filename);
+
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'Book not found' });
+        }
+
+        const reader = await getEpubReader(filePath);
+        const chapters = reader.getChapterList();
+        let currentIndex = chapters.findIndex((chapter) => chapter.id === chapterId);
+        if (currentIndex === -1) {
+            currentIndex = chapters.findIndex((chapter) => String(chapter.order) === String(chapterId));
+        }
+
+        if (currentIndex === -1) {
+            return res.status(404).json({ error: 'Chapter not found' });
+        }
+
+        await clearBookQueues(bookId);
+
+        const currentChapter = chapters[currentIndex];
+        const nextChapter = chapters[currentIndex + 1] || null;
+        const basePayload = {
+            bookId,
+            model: model || 'kokoro',
+            voice,
+            speed: speed || 1.0
+        };
+
+        const currentSentences = await getChapterSentences(reader, currentChapter.id);
+        const currentPayloads = currentSentences.map((sentence) => JSON.stringify({
+            ...basePayload,
+            chapterId: currentChapter.id,
+            sentence
+        }));
+
+        let nextPayloads = [];
+        if (nextChapter) {
+            const nextSentences = await getChapterSentences(reader, nextChapter.id);
+            nextPayloads = nextSentences.map((sentence) => JSON.stringify({
+                ...basePayload,
+                chapterId: nextChapter.id,
+                sentence
+            }));
+        }
+
+        const queueKey = getChapterQueueKey(bookId);
+        const queuedCount = await enqueueSentences(queueKey, [...currentPayloads, ...nextPayloads]);
+        await markBookQueued(bookId);
+
+        res.json({
+            queued: queuedCount,
+            currentChapterSentences: currentPayloads.length,
+            nextChapterSentences: nextPayloads.length,
+            nextChapterId: nextChapter ? nextChapter.id : null
+        });
+    } catch (error) {
+        log.error('Error enqueueing chapter TTS jobs:', error);
+        res.status(500).json({ error: 'Failed to enqueue chapter sentences' });
+    }
+});
+
+/**
+ * Enqueue prefetch sentences for current chapter (highest priority)
+ */
+app.post('/api/tts/queue/prefetch', async (req, res) => {
+    try {
+        if (!redisReady) {
+            return res.status(503).json({ error: 'Redis is unavailable' });
+        }
+
+        const { bookId, chapterId, startIndex, model, voice, speed } = req.body;
+        if (!bookId || !chapterId || !voice) {
+            return res.status(400).json({ error: 'Missing required fields: bookId, chapterId, and voice are required' });
+        }
+
+        const filename = validateFilename(bookId, DATA_DIR);
+        const filePath = createSecurePath(DATA_DIR, filename);
+
+        if (!validateFileAccess(filePath, DATA_DIR)) {
+            return res.status(404).json({ error: 'Book not found' });
+        }
+
+        const reader = await getEpubReader(filePath);
+        const sentences = await getChapterSentences(reader, chapterId);
+        const normalizedStartIndex = Number.isInteger(startIndex) ? startIndex : Number.parseInt(startIndex || '0', 10);
+        const safeStartIndex = Number.isNaN(normalizedStartIndex) ? -1 : normalizedStartIndex;
+        const sliceStart = Math.max(0, safeStartIndex + 1);
+        const sliceEnd = sliceStart + TTS_PREFETCH_COUNT;
+        const slice = sentences.slice(sliceStart, sliceEnd);
+
+        const basePayload = {
+            bookId,
+            model: model || 'kokoro',
+            voice,
+            speed: speed || 1.0
+        };
+
+        const payloads = slice.map((sentence) => JSON.stringify({
+            ...basePayload,
+            chapterId,
+            sentence
+        }));
+
+        const queueKey = getPrefetchQueueKey(bookId);
+        const queuedCount = await enqueueSentences(queueKey, payloads);
+        await markBookQueued(bookId);
+
+        res.json({
+            queued: queuedCount,
+            startIndex: safeStartIndex,
+            prefetchCount: TTS_PREFETCH_COUNT
+        });
+    } catch (error) {
+        log.error('Error enqueueing prefetch TTS jobs:', error);
+        res.status(500).json({ error: 'Failed to enqueue prefetch sentences' });
+    }
+});
+
+/**
  * Proxy endpoint for TTS requests with caching
  */
-app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
+app.post('/api/tts/speech', async (req, res) => {
     try {
-        const { model, input, voice, response_format, speed } = req.body;
+        const { model, input, voice, response_format, speed, bookId } = req.body;
 
         // Validate required fields
         if (!input || !voice) {
@@ -687,11 +1032,28 @@ app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
             });
         }
 
-        // Forward request to TTS server
+        const cacheKey = getTtsCacheKey({
+            bookId: bookId || 'unknown',
+            model,
+            voice,
+            speed,
+            sentence: input
+        });
+
+        const cachedAudio = await getCachedAudio(cacheKey);
+        if (cachedAudio) {
+            res.set({
+                'Content-Type': 'audio/wav',
+                'Content-Disposition': 'attachment; filename="speech.wav"',
+                'X-TTS-Cache': 'HIT'
+            });
+            return res.send(cachedAudio);
+        }
+
         const ttsResponse = await fetch(`${TTS_SERVICE_URL}/v1/audio/speech`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: model || 'kokoro',
@@ -706,20 +1068,19 @@ app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
             throw new Error(`TTS server error: ${ttsResponse.status} - ${ttsResponse.statusText}`);
         }
 
-        // Set appropriate headers
-        res.set({
-            'Content-Type': 'audio/wav',
-            'Content-Disposition': 'attachment; filename="speech.wav"',
-            'X-TTS-Cache': res.get('X-TTS-Cache') || 'MISS'
-        });
-
-        if (!ttsResponse.body) {
+        const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+        if (audioBuffer.length === 0) {
             throw new Error('TTS server returned empty response body');
         }
 
-        // Stream the audio response
-        const readable = Readable.fromWeb(ttsResponse.body);
-        await pipeline(readable, res);
+        await setCachedAudio(cacheKey, audioBuffer);
+
+        res.set({
+            'Content-Type': 'audio/wav',
+            'Content-Disposition': 'attachment; filename="speech.wav"',
+            'X-TTS-Cache': 'MISS'
+        });
+        res.send(audioBuffer);
 
     } catch (error) {
         log.error('TTS proxy error:', error);
@@ -733,10 +1094,17 @@ app.post('/api/tts/speech', cache(ttsCacheOptions), async (req, res) => {
 /**
  * Get TTS cache statistics
  */
-app.get('/api/tts/cache/stats', (req, res) => {
+app.get('/api/tts/cache/stats', async (req, res) => {
     try {
-        const stats = apicache.getPerformance();
-        res.json(stats);
+        if (!redisReady) {
+            return res.status(503).json({ error: 'Redis is unavailable' });
+        }
+
+        const keys = await redisClient.dbSize();
+        res.json({
+            keys,
+            ttlSeconds: TTS_CACHE_TTL_SECONDS
+        });
     } catch (error) {
         log.error('Error getting cache stats:', error);
         res.status(500).json({ error: 'Failed to get cache statistics' });
@@ -746,10 +1114,27 @@ app.get('/api/tts/cache/stats', (req, res) => {
 /**
  * Clear TTS cache
  */
-app.delete('/api/tts/cache', (req, res) => {
+app.delete('/api/tts/cache', async (req, res) => {
     try {
-        apicache.clear();
-        res.json({ message: 'TTS cache cleared successfully' });
+        if (!redisReady) {
+            return res.status(503).json({ error: 'Redis is unavailable' });
+        }
+
+        let cursor = '0';
+        let deleted = 0;
+
+        do {
+            const result = await redisClient.scan(cursor, {
+                MATCH: `${TTS_CACHE_KEY_PREFIX}*`,
+                COUNT: 200
+            });
+            cursor = result.cursor;
+            if (result.keys.length > 0) {
+                deleted += await redisClient.del(result.keys);
+            }
+        } while (cursor !== '0');
+
+        res.json({ message: 'TTS cache cleared successfully', deleted });
     } catch (error) {
         log.error('Error clearing cache:', error);
         res.status(500).json({ error: 'Failed to clear cache' });
@@ -794,7 +1179,7 @@ app.listen(PORT, () => {
     }
     
     log.info(`TTS Service URL: ${TTS_SERVICE_URL}`);
-    log.info(`TTS Cache enabled with ${TTS_CACHE_DURATION} timeout (apicache)`);
+    log.info(`TTS Cache enabled with Redis TTL ${TTS_CACHE_TTL_SECONDS}s`);
     log.info('Available EPUB files in data directory:');
     
     try {

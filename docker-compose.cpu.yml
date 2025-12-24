@@ -9,12 +9,15 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - TTS_SERVICE_URL=http://tts-service:5005
+      - REDIS_URL=redis://redis:6379
     volumes:
       - ebook-data:/app/data
       - ./client/build:/app/client/build:ro
     depends_on:
       tts-service:
         condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - ebook-speaker
     healthcheck:
@@ -68,6 +71,16 @@ services:
           memory: 512M
           cpus: '0.5'
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "0.0.0.0:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ebook-speaker
+    restart: unless-stopped
+
 networks:
   ebook-speaker:
     driver: bridge
@@ -76,4 +89,6 @@ volumes:
   ebook-data:
     driver: local
   tts-assets:
+    driver: local
+  redis-data:
     driver: local

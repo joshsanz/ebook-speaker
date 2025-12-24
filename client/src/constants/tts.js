@@ -26,6 +26,11 @@ export const TTS_CONFIG = {
   DEFAULT_FORMAT: 'wav'
 };
 
+export const TTS_MODEL_OPTIONS = [
+  { value: 'kokoro', label: 'Kokoro' },
+  { value: 'supertonic', label: 'Supertonic' }
+];
+
 // Error messages
 export const TTS_ERRORS = {
   NO_TEXT_CONTENT: 'No text content available for speech',

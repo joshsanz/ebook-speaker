@@ -9,7 +9,7 @@ import logger from '../utils/logger';
  * @param {Function} onAutoAdvance - Callback for auto-advance functionality
  * @returns {Object} TTS state and control functions
  */
-export const useTTS = (onAutoAdvance) => {
+export const useTTS = (onAutoAdvance, bookId) => {
   // State management
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -26,7 +26,8 @@ export const useTTS = (onAutoAdvance) => {
     getAudioAtIndex,
     getQueueLength,
     currentVoiceRef,
-    currentSpeedRef
+    currentSpeedRef,
+    currentModelRef
   } = useAudioQueue();
 
   const {
@@ -59,8 +60,14 @@ export const useTTS = (onAutoAdvance) => {
    * @param {string|string[]} textOrSentences - Text to speak OR pre-processed sentences array
    * @param {string} voice - Voice identifier
    * @param {number} speed - Playback speed
+   * @param {string} model - TTS model identifier
    */
-  const speakText = useCallback(async (textOrSentences, voice = TTS_CONFIG.DEFAULT_VOICE, speed = TTS_CONFIG.DEFAULT_SPEED) => {
+  const speakText = useCallback(async (
+    textOrSentences,
+    voice = TTS_CONFIG.DEFAULT_VOICE,
+    speed = TTS_CONFIG.DEFAULT_SPEED,
+    model = TTS_CONFIG.DEFAULT_MODEL
+  ) => {
     if (isSpeaking) {
       stopSpeaking();
       return;
@@ -80,7 +87,15 @@ export const useTTS = (onAutoAdvance) => {
       setIsSpeaking(true);
       setCurrentAudioIndex(0);
 
-      const audioUrls = await generateAudioQueue(textOrSentences, voice, speed, setIsLoadingAudio, setTotalAudioCount);
+      const audioUrls = await generateAudioQueue(
+        textOrSentences,
+        voice,
+        speed,
+        model,
+        bookId,
+        setIsLoadingAudio,
+        setTotalAudioCount
+      );
       logger.info(`[useTTS] Generated ${audioUrls.length} audio URLs`);
 
       if (audioUrls.length > 0) {
@@ -105,7 +120,7 @@ export const useTTS = (onAutoAdvance) => {
       setIsLoadingAudio(false);
       throw error;
     }
-  }, [isSpeaking, generateAudioQueue, playAudioAtIndex, isPaused]);
+  }, [isSpeaking, generateAudioQueue, playAudioAtIndex, isPaused, bookId]);
 
   /**
    * Pauses current TTS playback
@@ -172,8 +187,14 @@ export const useTTS = (onAutoAdvance) => {
       return;
     }
 
-    await regenerateRemainingQueue(currentAudioIndex, currentVoiceRef.current, newSpeed, isSpeaking);
-  }, [isSpeaking, currentAudioIndex, regenerateRemainingQueue]);
+    await regenerateRemainingQueue(
+      currentAudioIndex,
+      currentVoiceRef.current,
+      newSpeed,
+      currentModelRef.current,
+      isSpeaking
+    );
+  }, [isSpeaking, currentAudioIndex, regenerateRemainingQueue, currentModelRef, currentVoiceRef]);
 
   /**
    * Handles voice changes during playback
@@ -185,8 +206,33 @@ export const useTTS = (onAutoAdvance) => {
       return;
     }
 
-    await regenerateRemainingQueue(currentAudioIndex, newVoice, currentSpeedRef.current, isSpeaking);
-  }, [isSpeaking, currentAudioIndex, regenerateRemainingQueue]);
+    await regenerateRemainingQueue(
+      currentAudioIndex,
+      newVoice,
+      currentSpeedRef.current,
+      currentModelRef.current,
+      isSpeaking
+    );
+  }, [isSpeaking, currentAudioIndex, regenerateRemainingQueue, currentModelRef, currentSpeedRef]);
+
+  /**
+   * Handles model changes during playback
+   * @param {string} newModel - New model identifier
+   */
+  const handleModelChange = useCallback(async (newModel) => {
+    if (!isSpeaking) {
+      currentModelRef.current = newModel;
+      return;
+    }
+
+    await regenerateRemainingQueue(
+      currentAudioIndex,
+      currentVoiceRef.current,
+      currentSpeedRef.current,
+      newModel,
+      isSpeaking
+    );
+  }, [isSpeaking, currentAudioIndex, regenerateRemainingQueue, currentSpeedRef, currentVoiceRef]);
 
   /**
    * Gets current sentences being processed
@@ -222,6 +268,7 @@ export const useTTS = (onAutoAdvance) => {
     handleAudioEnded,
     handleSpeedChange,
     handleVoiceChange,
+    handleModelChange,
     
     // Additional utilities for highlighting
     getCurrentSentencesForHighlighting

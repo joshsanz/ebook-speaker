@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useTTS } from '../hooks/useTTS';
 import { useCleanup } from '../hooks/useCleanup';
@@ -37,7 +37,12 @@ const BookReader = () => {
     STORAGE_KEYS.SELECTED_VOICE, 
     DEFAULT_VALUES.VOICE
   );
-  
+
+  const [selectedModel, setSelectedModel] = useLocalStorage(
+    STORAGE_KEYS.SELECTED_MODEL,
+    DEFAULT_VALUES.MODEL
+  );
+
   const [selectedSpeed, setSelectedSpeed] = useLocalStorage(
     STORAGE_KEYS.SELECTED_SPEED, 
     DEFAULT_VALUES.SPEED,
@@ -57,17 +62,68 @@ const BookReader = () => {
   const {
     isSpeaking, isPaused, isLoadingAudio, totalAudioCount, currentAudioIndex,
     audioRef, speakText, pauseSpeaking, resumeSpeaking, fastForward, 
-    rewind, stopSpeaking, handleAudioEnded, handleSpeedChange, handleVoiceChange
-  } = useTTS(handleAutoAdvance);
+    rewind, stopSpeaking, handleAudioEnded, handleSpeedChange, handleVoiceChange,
+    handleModelChange
+  } = useTTS(handleAutoAdvance, filename);
 
   
   const {
     voices, groupedVoices, loading: voicesLoading, 
     error: voicesError, getDefaultVoice
-  } = useVoices();
+  } = useVoices(selectedModel);
 
   // Sentence highlighting hook
   const { highlightSentence, clearHighlight, clearAllHighlights } = useSentenceHighlighting();
+  const lastPrefetchIndexRef = useRef(-1);
+
+  const enqueueChapterQueue = useCallback(async (targetChapterId) => {
+    if (!filename || !targetChapterId || !selectedVoice) {
+      return;
+    }
+
+    try {
+      await fetch('/api/tts/queue/chapter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookId: filename,
+          chapterId: targetChapterId,
+          model: selectedModel,
+          voice: selectedVoice,
+          speed: selectedSpeed
+        })
+      });
+    } catch (error) {
+      logger.warn('Failed to enqueue chapter TTS jobs:', error);
+    }
+  }, [filename, selectedModel, selectedVoice, selectedSpeed]);
+
+  const enqueuePrefetchQueue = useCallback(async (startIndex) => {
+    if (!filename || !chapterId || !selectedVoice) {
+      return;
+    }
+
+    try {
+      await fetch('/api/tts/queue/prefetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookId: filename,
+          chapterId: chapterId,
+          startIndex,
+          model: selectedModel,
+          voice: selectedVoice,
+          speed: selectedSpeed
+        })
+      });
+    } catch (error) {
+      logger.warn('Failed to enqueue prefetch TTS jobs:', error);
+    }
+  }, [filename, chapterId, selectedModel, selectedVoice, selectedSpeed]);
+
+  const resetPrefetchTracking = useCallback(() => {
+    lastPrefetchIndexRef.current = -1;
+  }, []);
 
   // Content is already sanitized on the server before sentence spans are added
   // No need for additional client-side sanitization that could break sentence highlighting
@@ -94,7 +150,7 @@ const BookReader = () => {
     }
 
     try {
-      await speakText(ttsSentences, selectedVoice, selectedSpeed);
+      await speakText(ttsSentences, selectedVoice, selectedSpeed, selectedModel);
     } catch (error) {
       logger.error('TTS Error:', error);
       
@@ -109,7 +165,7 @@ const BookReader = () => {
       
       alert(errorMessage);
     }
-  }, [isSpeaking, isPaused, ttsSentences, speakText, selectedVoice, selectedSpeed, pauseSpeaking, resumeSpeaking]);
+  }, [isSpeaking, isPaused, ttsSentences, speakText, selectedVoice, selectedSpeed, selectedModel, pauseSpeaking, resumeSpeaking]);
 
 
 
@@ -122,7 +178,24 @@ const BookReader = () => {
   const handleVoiceSelectionChange = useCallback(async (newVoice) => {
     setSelectedVoice(newVoice);
     await handleVoiceChange(newVoice);
-  }, [handleVoiceChange, setSelectedVoice]);
+    if (chapterId) {
+      resetPrefetchTracking();
+      enqueueChapterQueue(chapterId);
+    }
+  }, [handleVoiceChange, setSelectedVoice, chapterId, resetPrefetchTracking, enqueueChapterQueue]);
+
+  /**
+   * Handles model selection changes and updates TTS engine
+   */
+  const handleModelSelectionChange = useCallback(async (newModel) => {
+    setSelectedModel(newModel);
+    stopSpeaking();
+    await handleModelChange(newModel);
+    if (chapterId) {
+      resetPrefetchTracking();
+      enqueueChapterQueue(chapterId);
+    }
+  }, [handleModelChange, setSelectedModel, stopSpeaking, chapterId, resetPrefetchTracking, enqueueChapterQueue]);
 
   /**
    * Handles speed selection changes and updates TTS engine
@@ -130,7 +203,11 @@ const BookReader = () => {
   const handleSpeedSelectionChange = useCallback(async (newSpeed) => {
     setSelectedSpeed(newSpeed);
     await handleSpeedChange(newSpeed);
-  }, [handleSpeedChange, setSelectedSpeed]);
+    if (chapterId) {
+      resetPrefetchTracking();
+      enqueueChapterQueue(chapterId);
+    }
+  }, [handleSpeedChange, setSelectedSpeed, chapterId, resetPrefetchTracking, enqueueChapterQueue]);
 
 
 
@@ -159,6 +236,8 @@ const BookReader = () => {
     if (chapterId && chapters.length > 0) {
       fetchChapterContent(chapterId).then(() => {
         setIsReading(true);
+        resetPrefetchTracking();
+        enqueueChapterQueue(chapterId);
         // Scroll to top when chapter content loads
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
@@ -172,7 +251,7 @@ const BookReader = () => {
 
       const timer = setTimeout(async () => {
         try {
-          await speakText(ttsSentences, selectedVoice, selectedSpeed);
+          await speakText(ttsSentences, selectedVoice, selectedSpeed, selectedModel);
           logger.info('TTS auto-started successfully');
         } catch (error) {
           logger.error('Error auto-starting TTS:', error);
@@ -182,12 +261,35 @@ const BookReader = () => {
 
       return () => clearTimeout(timer);
     }
-  }, [autoStartTTS, ttsSentences, isSpeaking, isLoadingAudio, loading, speakText, selectedVoice, selectedSpeed, setAutoStartTTS]);
+  }, [autoStartTTS, ttsSentences, isSpeaking, isLoadingAudio, loading, speakText, selectedVoice, selectedSpeed, selectedModel, setAutoStartTTS]);
+
+  useEffect(() => {
+    if (!isSpeaking || !chapterId) {
+      return;
+    }
+
+    if (currentAudioIndex <= lastPrefetchIndexRef.current) {
+      return;
+    }
+
+    lastPrefetchIndexRef.current = currentAudioIndex;
+    enqueuePrefetchQueue(currentAudioIndex);
+  }, [isSpeaking, currentAudioIndex, chapterId, enqueuePrefetchQueue]);
 
 
   // Set default voice when voices are loaded
   useEffect(() => {
-    if (voices.length > 0 && selectedVoice === DEFAULT_VALUES.VOICE) {
+    if (voices.length === 0) {
+      return;
+    }
+
+    const voiceNames = new Set(voices.map((voice) => voice.name));
+    if (!voiceNames.has(selectedVoice)) {
+      const defaultVoice = getDefaultVoice();
+      if (defaultVoice) {
+        setSelectedVoice(defaultVoice);
+      }
+    } else if (selectedVoice === DEFAULT_VALUES.VOICE) {
       const defaultVoice = getDefaultVoice();
       if (defaultVoice && defaultVoice !== selectedVoice) {
         setSelectedVoice(defaultVoice);
@@ -245,6 +347,8 @@ const BookReader = () => {
           setControlsHidden={setControlsHidden}
           autoAdvanceEnabled={autoAdvanceEnabled}
           handleAutoAdvanceToggle={toggleAutoAdvance}
+          selectedModel={selectedModel}
+          handleModelSelectionChange={handleModelSelectionChange}
           voices={voices}
           groupedVoices={groupedVoices}
           selectedVoice={selectedVoice}

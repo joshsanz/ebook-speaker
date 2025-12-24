@@ -13,6 +13,8 @@ export const useAudioQueue = () => {
   const sentencesRef = useRef([]);
   const currentVoiceRef = useRef('');
   const currentSpeedRef = useRef(TTS_CONFIG.DEFAULT_SPEED);
+  const currentModelRef = useRef(TTS_CONFIG.DEFAULT_MODEL);
+  const currentBookIdRef = useRef('');
   const abortControllerRef = useRef(null);
 
   /**
@@ -20,11 +22,21 @@ export const useAudioQueue = () => {
    * @param {string|string[]} textOrSentences - Text to process OR pre-processed sentences array
    * @param {string} voice - Voice identifier
    * @param {number} speed - Playback speed
+   * @param {string} model - TTS model identifier
+   * @param {string} bookId - Book identifier for caching
    * @param {Function} setIsLoadingAudio - Loading state setter
    * @param {Function} setTotalAudioCount - Total count setter
    * @returns {Promise<string[]>} Array of audio URLs
    */
-  const generateAudioQueue = useCallback(async (textOrSentences, voice, speed, setIsLoadingAudio, setTotalAudioCount) => {
+  const generateAudioQueue = useCallback(async (
+    textOrSentences,
+    voice,
+    speed,
+    model,
+    bookId,
+    setIsLoadingAudio,
+    setTotalAudioCount
+  ) => {
     // Support both raw text (legacy) and pre-processed sentences (new)
     const sentences = Array.isArray(textOrSentences) 
       ? textOrSentences 
@@ -38,6 +50,8 @@ export const useAudioQueue = () => {
     sentencesRef.current = sentences;
     currentVoiceRef.current = voice;
     currentSpeedRef.current = speed;
+    currentModelRef.current = model;
+    currentBookIdRef.current = bookId || '';
 
     const audioUrls = [];
     setIsLoadingAudio(true);
@@ -53,9 +67,11 @@ export const useAudioQueue = () => {
         }
 
         const audioUrl = await generateAudioForSentence(
-          sentences[i], 
-          voice, 
-          speed, 
+          sentences[i],
+          voice,
+          speed,
+          model,
+          currentBookIdRef.current,
           abortControllerRef.current.signal
         );
         audioUrls.push(audioUrl);
@@ -68,7 +84,7 @@ export const useAudioQueue = () => {
 
         // Generate remaining sentences in background
         if (sentences.length > initialBatch) {
-          generateRemainingAudio(sentences, voice, speed, initialBatch);
+          generateRemainingAudio(sentences, voice, speed, model, initialBatch);
         }
 
         return audioUrls;
@@ -88,7 +104,7 @@ export const useAudioQueue = () => {
    * @param {number} speed - Playback speed
    * @param {number} startIndex - Index to start from
    */
-  const generateRemainingAudio = useCallback(async (sentences, voice, speed, startIndex) => {
+  const generateRemainingAudio = useCallback(async (sentences, voice, speed, model, startIndex) => {
     setTimeout(async () => {
       for (let i = startIndex; i < sentences.length; i++) {
         if (abortControllerRef.current?.signal.aborted) {
@@ -98,9 +114,11 @@ export const useAudioQueue = () => {
         try {
           logger.debug(`Generating audio for sentence ${i + 1}/${sentences.length}`);
           const audioUrl = await generateAudioForSentence(
-            sentences[i], 
-            voice, 
-            speed, 
+            sentences[i],
+            voice,
+            speed,
+            model,
+            currentBookIdRef.current,
             abortControllerRef.current.signal
           );
           audioQueueRef.current.push(audioUrl);
@@ -122,9 +140,10 @@ export const useAudioQueue = () => {
    * @param {number} currentIndex - Current audio index
    * @param {string} newVoice - New voice identifier
    * @param {number} newSpeed - New playback speed
+   * @param {string} model - TTS model identifier
    * @param {boolean} isSpeaking - Current speaking state
    */
-  const regenerateRemainingQueue = useCallback(async (currentIndex, newVoice, newSpeed, isSpeaking) => {
+  const regenerateRemainingQueue = useCallback(async (currentIndex, newVoice, newSpeed, model, isSpeaking) => {
     if (!sentencesRef.current.length || !isSpeaking) {
       return;
     }
@@ -132,6 +151,7 @@ export const useAudioQueue = () => {
     // Update current settings
     currentVoiceRef.current = newVoice;
     currentSpeedRef.current = newSpeed;
+    currentModelRef.current = model;
 
     const nextAudioIndex = currentIndex + 1;
     if (nextAudioIndex >= sentencesRef.current.length) {
@@ -156,9 +176,11 @@ export const useAudioQueue = () => {
         try {
           logger.debug(`Regenerating audio for sentence ${sentenceIndex + 1}/${sentencesRef.current.length} with new settings`);
           const audioUrl = await generateAudioForSentence(
-            remainingSentences[i], 
-            newVoice, 
-            newSpeed, 
+            remainingSentences[i],
+            newVoice,
+            newSpeed,
+            model,
+            currentBookIdRef.current,
             abortControllerRef.current.signal
           );
 
@@ -192,6 +214,8 @@ export const useAudioQueue = () => {
     sentencesRef.current = [];
     currentVoiceRef.current = '';
     currentSpeedRef.current = TTS_CONFIG.DEFAULT_SPEED;
+    currentModelRef.current = TTS_CONFIG.DEFAULT_MODEL;
+    currentBookIdRef.current = '';
   }, []);
 
   /**
@@ -227,6 +251,7 @@ export const useAudioQueue = () => {
     getAudioAtIndex,
     getQueueLength,
     currentVoiceRef,
-    currentSpeedRef
+    currentSpeedRef,
+    currentModelRef
   };
 };

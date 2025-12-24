@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { TTS_CONFIG } from '../constants/tts';
 import logger from '../utils/logger';
 
-export const useVoices = () => {
+export const useVoices = (model = TTS_CONFIG.DEFAULT_MODEL) => {
   const [voices, setVoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const modelToUse = model || TTS_CONFIG.DEFAULT_MODEL;
 
   // Memoized emoji mappings to prevent re-creation on every render
   const languageEmojis = useMemo(() => ({
@@ -65,12 +67,12 @@ export const useVoices = () => {
   }, [voices, genderEmojis, getLanguageEmoji]);
 
   // Fetch voices from API
-  const fetchVoices = async () => {
+  const fetchVoices = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const response = await fetch('/api/tts/voices');
+      const response = await fetch(`/api/tts/voices?model=${encodeURIComponent(modelToUse)}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch voices: ${response.status}`);
       }
@@ -83,16 +85,31 @@ export const useVoices = () => {
       
       // Fallback to hardcoded voices if API fails
       logger.warn('Using fallback voices due to API error');
-      setVoices([
-        { name: 'af_heart', language: 'en', gender: 'female', description: 'American Female Heart' },
-        { name: 'am_adam', language: 'en', gender: 'male', description: 'American Male Adam' },
-        { name: 'bf_emma', language: 'en', gender: 'female', description: 'British Female Emma' },
-        { name: 'bm_lewis', language: 'en', gender: 'male', description: 'British Male Lewis' },
-      ]);
+      if (modelToUse === 'supertonic') {
+        setVoices([
+          { name: 'M1', language: 'en', gender: 'male', description: 'English Male M1' },
+          { name: 'M2', language: 'en', gender: 'male', description: 'English Male M2' },
+          { name: 'M3', language: 'en', gender: 'male', description: 'English Male M3' },
+          { name: 'M4', language: 'en', gender: 'male', description: 'English Male M4' },
+          { name: 'M5', language: 'en', gender: 'male', description: 'English Male M5' },
+          { name: 'F1', language: 'en', gender: 'female', description: 'English Female F1' },
+          { name: 'F2', language: 'en', gender: 'female', description: 'English Female F2' },
+          { name: 'F3', language: 'en', gender: 'female', description: 'English Female F3' },
+          { name: 'F4', language: 'en', gender: 'female', description: 'English Female F4' },
+          { name: 'F5', language: 'en', gender: 'female', description: 'English Female F5' },
+        ]);
+      } else {
+        setVoices([
+          { name: 'af_heart', language: 'en', gender: 'female', description: 'American Female Heart' },
+          { name: 'am_adam', language: 'en', gender: 'male', description: 'American Male Adam' },
+          { name: 'bf_emma', language: 'en', gender: 'female', description: 'British Female Emma' },
+          { name: 'bm_lewis', language: 'en', gender: 'male', description: 'British Male Lewis' },
+        ]);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [modelToUse]);
 
   // Group voices by language for organized display
   const groupedVoices = useMemo(() => {
@@ -128,16 +145,16 @@ export const useVoices = () => {
   // Get default voice (first available voice or fallback)
   const getDefaultVoice = () => {
     if (processedVoices.length > 0) {
-      // Prefer 'af_heart' if available, otherwise use first voice
-      const preferred = processedVoices.find(v => v.name === 'af_heart');
+      const preferredName = modelToUse === 'supertonic' ? 'F1' : 'af_heart';
+      const preferred = processedVoices.find(v => v.name === preferredName);
       return preferred ? preferred.name : processedVoices[0].name;
     }
-    return 'af_heart'; // Fallback
+    return modelToUse === 'supertonic' ? 'F1' : 'af_heart';
   };
 
   useEffect(() => {
     fetchVoices();
-  }, []);
+  }, [fetchVoices]);
 
   return {
     voices: processedVoices,

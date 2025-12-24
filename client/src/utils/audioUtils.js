@@ -6,20 +6,30 @@ import logger from './logger';
  * @param {string} text - Text to convert to speech
  * @param {string} voice - Voice identifier
  * @param {number} speed - Playback speed
+ * @param {string} model - TTS model identifier
+ * @param {string} bookId - Book identifier for cache keying
  * @param {AbortSignal} signal - Abort controller signal
  * @returns {Promise<string>} Audio blob URL
  */
-export const generateAudioForSentence = async (text, voice, speed = TTS_CONFIG.DEFAULT_SPEED, signal) => {
+export const generateAudioForSentence = async (
+  text,
+  voice,
+  speed = TTS_CONFIG.DEFAULT_SPEED,
+  model = TTS_CONFIG.DEFAULT_MODEL,
+  bookId,
+  signal
+) => {
   try {
     const response = await fetch('/api/tts/speech', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: TTS_CONFIG.DEFAULT_MODEL,
+        model,
         input: text,
         voice: voice,
         response_format: TTS_CONFIG.DEFAULT_FORMAT,
-        speed: speed
+        speed: speed,
+        bookId: bookId || undefined
       }),
       signal
     });
