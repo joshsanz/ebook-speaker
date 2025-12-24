@@ -24,6 +24,9 @@ RUN npm ci
 # Copy client source code
 COPY client/ ./
 
+# Copy shared directory for imports
+COPY shared/ ../shared/
+
 # Build React client
 RUN npm run build
 

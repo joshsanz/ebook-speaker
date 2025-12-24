@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TTS_CONFIG } from '../constants/tts';
 import logger from '../utils/logger';
+import {
+  getVoicesByModel,
+  getDefaultVoice as getDefaultVoiceFromList
+} from '../../../shared/ttsVoices';
 
 export const useVoices = (model = TTS_CONFIG.DEFAULT_MODEL) => {
   const [voices, setVoices] = useState([]);
@@ -82,30 +86,11 @@ export const useVoices = (model = TTS_CONFIG.DEFAULT_MODEL) => {
     } catch (err) {
       setError(err.message);
       logger.error('Error fetching voices:', err);
-      
-      // Fallback to hardcoded voices if API fails
-      logger.warn('Using fallback voices due to API error');
-      if (modelToUse === 'supertonic') {
-        setVoices([
-          { name: 'M1', language: 'en', gender: 'male', description: 'English Male M1' },
-          { name: 'M2', language: 'en', gender: 'male', description: 'English Male M2' },
-          { name: 'M3', language: 'en', gender: 'male', description: 'English Male M3' },
-          { name: 'M4', language: 'en', gender: 'male', description: 'English Male M4' },
-          { name: 'M5', language: 'en', gender: 'male', description: 'English Male M5' },
-          { name: 'F1', language: 'en', gender: 'female', description: 'English Female F1' },
-          { name: 'F2', language: 'en', gender: 'female', description: 'English Female F2' },
-          { name: 'F3', language: 'en', gender: 'female', description: 'English Female F3' },
-          { name: 'F4', language: 'en', gender: 'female', description: 'English Female F4' },
-          { name: 'F5', language: 'en', gender: 'female', description: 'English Female F5' },
-        ]);
-      } else {
-        setVoices([
-          { name: 'af_heart', language: 'en', gender: 'female', description: 'American Female Heart' },
-          { name: 'am_adam', language: 'en', gender: 'male', description: 'American Male Adam' },
-          { name: 'bf_emma', language: 'en', gender: 'female', description: 'British Female Emma' },
-          { name: 'bm_lewis', language: 'en', gender: 'male', description: 'British Male Lewis' },
-        ]);
-      }
+
+      // Fallback to static voice list if API fails
+      logger.warn('Using fallback voices from static list due to API error');
+      const fallbackVoices = getVoicesByModel(modelToUse);
+      setVoices(fallbackVoices);
     } finally {
       setLoading(false);
     }
@@ -142,15 +127,10 @@ export const useVoices = (model = TTS_CONFIG.DEFAULT_MODEL) => {
     return groups;
   }, [processedVoices]);
 
-  // Get default voice (first available voice or fallback)
-  const getDefaultVoice = () => {
-    if (processedVoices.length > 0) {
-      const preferredName = modelToUse === 'supertonic' ? 'F1' : 'af_heart';
-      const preferred = processedVoices.find(v => v.name === preferredName);
-      return preferred ? preferred.name : processedVoices[0].name;
-    }
-    return modelToUse === 'supertonic' ? 'F1' : 'af_heart';
-  };
+  // Get default voice (from static list)
+  const getDefaultVoice = useCallback(() => {
+    return getDefaultVoiceFromList(modelToUse);
+  }, [modelToUse]);
 
   useEffect(() => {
     fetchVoices();

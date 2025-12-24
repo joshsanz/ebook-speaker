@@ -18,6 +18,13 @@ import asyncio
 from threading import Event
 from kokoro_onnx.config import MAX_PHONEME_LENGTH, SAMPLE_RATE
 from supertonic_wrapper import SupertonicTTS
+from voices import (
+    SUPERTONIC_VOICES,
+    KOKORO_VOICES,
+    get_voices_by_model,
+    get_voice_names,
+    is_valid_voice,
+)
 
 
 # Initialize Kokoro TTS
@@ -41,8 +48,6 @@ if DEFAULT_TTS_MODEL not in ALLOWED_MODEL_FAMILIES:
     DEFAULT_TTS_MODEL = "kokoro"
 TTS_MODEL_FILE = os.environ.get("TTS_MODEL_FILE")
 TTS_SUPERTONIC_STEPS = int(os.environ.get("TTS_SUPERTONIC_STEPS", "5"))
-SUPER_TONIC_VOICES = [f"M{i}" for i in range(
-    1, 6)] + [f"F{i}" for i in range(1, 6)]
 
 
 def signal_handler(signum, frame):
@@ -504,7 +509,7 @@ async def health_check():
 
 @app.get("/v1/audio/voices", response_model=list[VoiceResponse])
 async def get_voices(model: str = DEFAULT_TTS_MODEL):
-    """Get list of available voices"""
+    """Get list of available voices from static voice list"""
     if model not in ALLOWED_MODEL_FAMILIES:
         raise HTTPException(
             status_code=400,
@@ -515,22 +520,16 @@ async def get_voices(model: str = DEFAULT_TTS_MODEL):
         )
 
     try:
-        if model == "kokoro":
-            tts_model = await get_kokoro_model()
-            voices = tts_model.get_voices()
-            parse_voice = parse_voice_name
-        else:
-            await get_supertonic_model()
-            voices = SUPER_TONIC_VOICES
-            parse_voice = parse_supertonic_voice_name
+        # Return static voice list (no need to initialize models)
+        voices_data = get_voices_by_model(model)
 
         voice_responses = []
-
-        for voice_name in voices:
-            voice_info = parse_voice(voice_name)
+        for voice in voices_data:
             voice_responses.append(VoiceResponse(
-                name=voice_name,
-                **voice_info
+                name=voice["name"],
+                language=voice["language"],
+                gender=voice["gender"],
+                description=voice["description"]
             ))
 
         return voice_responses
@@ -542,7 +541,7 @@ async def get_voices(model: str = DEFAULT_TTS_MODEL):
 
 @app.get("/v1/audio/languages", response_model=list[LanguageResponse])
 async def get_languages(model: str = DEFAULT_TTS_MODEL):
-    """Get list of supported languages"""
+    """Get list of supported languages from static voice list"""
     if model not in ALLOWED_MODEL_FAMILIES:
         raise HTTPException(
             status_code=400,
@@ -553,21 +552,12 @@ async def get_languages(model: str = DEFAULT_TTS_MODEL):
         )
 
     try:
-        # Get languages from available voices
-        if model == "kokoro":
-            tts_model = await get_kokoro_model()
-            voices = tts_model.get_voices()
-            parse_voice = parse_voice_name
-        else:
-            await get_supertonic_model()
-            voices = SUPER_TONIC_VOICES
-            parse_voice = parse_supertonic_voice_name
-
+        # Get languages from static voices
+        voices_data = get_voices_by_model(model)
         languages = set()
 
-        for voice_name in voices:
-            voice_info = parse_voice(voice_name)
-            languages.add(voice_info["language"])
+        for voice in voices_data:
+            languages.add(voice["language"])
 
         lang_responses = []
 
@@ -629,14 +619,9 @@ async def text_to_speech(request: SpeechRequest):
         )
 
     try:
-        if request.model == "kokoro":
-            tts_model = await get_kokoro_model()
-            available_voices = tts_model.get_voices()
-        else:
-            tts_model = await get_supertonic_model()
-            available_voices = SUPER_TONIC_VOICES
-
-        if request.voice not in available_voices:
+        # Validate voice against static voice list
+        if not is_valid_voice(request.voice, request.model):
+            available_voices = get_voice_names(request.model)
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -644,6 +629,12 @@ async def text_to_speech(request: SpeechRequest):
                     f"Available voices: {available_voices}"
                 )
             )
+
+        # Now initialize the models for actual TTS
+        if request.model == "kokoro":
+            tts_model = await get_kokoro_model()
+        else:
+            tts_model = await get_supertonic_model()
 
         # Check again before starting generation (in case shutdown was requested)
         if shutdown_event.is_set():
