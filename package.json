@@ -11,7 +11,9 @@
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
     "build:prod": "npm run build && npm run start",
-    "install-client": "cd client && npm install"
+    "install-client": "cd client && npm install",
+    "preflight": "node scripts/preflight.js",
+    "test:unit": "node --test \"tests/**/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",
