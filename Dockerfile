@@ -1,5 +1,5 @@
 # Multi-stage build for optimized image size
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -28,7 +28,7 @@ COPY client/ ./
 RUN npm run build
 
 # Production stage
-FROM node:20-slim AS runtime
+FROM node:24-slim AS runtime
 
 # Install runtime system dependencies
 RUN apt-get update && apt-get install -y \

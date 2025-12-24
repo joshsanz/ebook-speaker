@@ -17,17 +17,22 @@ import sys
 import asyncio
 from threading import Event
 from kokoro_onnx.config import MAX_PHONEME_LENGTH, SAMPLE_RATE
+from supertonic_wrapper import SupertonicTTS
 
 
 # Initialize Kokoro TTS
-tts_model = None
+kokoro_model = None
+supertonic_model = None
+supertonic_voice_styles = {}
+kokoro_model_lock = asyncio.Lock()
+supertonic_model_lock = asyncio.Lock()
 shutdown_event = Event()
 ASSETS_DIR = os.environ.get(
     "TTS_ASSETS_DIR",
     os.path.abspath(os.path.join(os.path.dirname(__file__), "assets"))
 )
-ALLOWED_MODEL_FAMILIES = ["kokoro"]
-DEFAULT_TTS_MODEL = os.environ.get("TTS_DEFAULT_MODEL", "kokoro")
+ALLOWED_MODEL_FAMILIES = ["kokoro", "supertonic"]
+DEFAULT_TTS_MODEL = os.environ.get("TTS_DEFAULT_MODEL", "supertonic")
 if DEFAULT_TTS_MODEL not in ALLOWED_MODEL_FAMILIES:
     print(
         "⚠️  TTS_DEFAULT_MODEL is not supported, falling back to 'kokoro': "
@@ -35,6 +40,9 @@ if DEFAULT_TTS_MODEL not in ALLOWED_MODEL_FAMILIES:
     )
     DEFAULT_TTS_MODEL = "kokoro"
 TTS_MODEL_FILE = os.environ.get("TTS_MODEL_FILE")
+TTS_SUPERTONIC_STEPS = int(os.environ.get("TTS_SUPERTONIC_STEPS", "5"))
+SUPER_TONIC_VOICES = [f"M{i}" for i in range(
+    1, 6)] + [f"F{i}" for i in range(1, 6)]
 
 
 def signal_handler(signum, frame):
@@ -84,10 +92,10 @@ def download_file_if_missing(url: str, filename: str) -> bool:
 
 def find_model_files():
     """Find model files, checking assets directory first, then fallbacks, then download"""
-    print("🔍 Checking for required model files...")
+    print("🔍 Checking for required Kokoro model files...")
 
-    # Model file patterns
-    model_patterns = ["kokoro-v1.0.fp16.onnx",
+    # Model file patterns - prioritize model.onnx
+    model_patterns = ["model.onnx", "kokoro-v1.0.fp16.onnx",
                       "kokoro-v1.0.onnx", "kokoro.onnx", "model_quantized.onnx"]
     voice_patterns = ["voices-v1.0.bin", "voices.bin"]
 
@@ -100,17 +108,18 @@ def find_model_files():
         model_patterns = [requested_model]
         print(f"🎯 TTS_MODEL_FILE set, requesting model: {requested_model}")
 
-    # Check assets directory first (persistent volume target)
-    os.makedirs(ASSETS_DIR, exist_ok=True)
-    search_dirs = [ASSETS_DIR, "/app/models", os.getcwd()]
-    model_search_dirs = [ASSETS_DIR] if requested_model else search_dirs
+    # Check assets/kokoro directory first (new organized structure)
+    kokoro_dir = os.path.join(ASSETS_DIR, "kokoro")
+    os.makedirs(kokoro_dir, exist_ok=True)
+    search_dirs = [kokoro_dir, "/app/models", os.getcwd()]
+    model_search_dirs = [kokoro_dir] if requested_model else search_dirs
 
     for directory in search_dirs:
         if not os.path.exists(directory):
             continue
 
-        if directory == ASSETS_DIR:
-            print(f"📁 Checking assets directory: {ASSETS_DIR}")
+        if directory == kokoro_dir:
+            print(f"📁 Checking Kokoro assets directory: {kokoro_dir}")
 
         directory_files = os.listdir(directory)
 
@@ -132,15 +141,15 @@ def find_model_files():
 
     # Download if still not found
     if not model_name or not voice_name:
-        print("📥 Model files not found locally, downloading...")
+        print("📥 Kokoro model files not found locally, downloading...")
         # Other defaults available:
         # model*.onnx for _quantized, _fp16, _q4, _q4f16, _q8f16, _uint8, _uint8f16, and ''
-        default_model = requested_model or "model_quantized.onnx"
+        default_model = requested_model or "model.onnx"
         default_voices = "voices-v1.0.bin"
 
         files_to_download = []
         if not model_name:
-            model_path = os.path.join(ASSETS_DIR, default_model)
+            model_path = os.path.join(kokoro_dir, default_model)
             files_to_download.append({
                 "url": (
                     "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/"
@@ -151,7 +160,7 @@ def find_model_files():
             model_name = model_path
 
         if not voice_name:
-            voice_path = os.path.join(ASSETS_DIR, default_voices)
+            voice_path = os.path.join(kokoro_dir, default_voices)
             files_to_download.append({
                 "url": f"https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/{default_voices}",
                 "filename": voice_path
@@ -209,48 +218,89 @@ def patch_kokoro_float_inputs(model):
     model._create_audio = _create_audio_float.__get__(model, type(model))
 
 
+async def get_kokoro_model():
+    global kokoro_model
+    if kokoro_model is not None:
+        return kokoro_model
+
+    async with kokoro_model_lock:
+        if kokoro_model is not None:
+            return kokoro_model
+
+        try:
+            # Find model files (mounted, local, or download)
+            model, voices = find_model_files()
+
+            # Create ONNX session to select an accelerator (CoreML/CUDA) if available
+            # type: ignore[attr-defined]
+            providers = ort.get_available_providers()
+            print("Available EPs:", ", ".join(providers))
+
+            # Remove TensorRT provider while debugging errors it causes
+            providers = [provider for provider in providers if provider !=
+                         "TensorrtExecutionProvider"]
+            print("Filtered EPs (TensorRT removed):", ", ".join(providers))
+
+            if "CUDAExecutionProvider" in providers:
+                # Apply CUDA conv algo search performance tweak by modifying the provider in place
+                providers = [provider if provider != "CUDAExecutionProvider"
+                             else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "EXHAUSTIVE"})
+                             for provider in providers]
+
+            print("Using inference engines", providers)
+
+            sess_opts = ort.SessionOptions()  # type: ignore[attr-defined]
+            cpu_count = os.cpu_count()
+            sess_opts.intra_op_num_threads = cpu_count
+            session = ort.InferenceSession(
+                model, session_options=sess_opts, providers=providers)
+
+            kokoro_model = kokoro_onnx.Kokoro.from_session(session, voices)
+            patch_kokoro_float_inputs(kokoro_model)
+            print("🎵 Kokoro model initialized successfully")
+        except Exception as e:
+            print(f"❌ Failed to initialize Kokoro model: {e}")
+            raise
+
+    return kokoro_model
+
+
+async def get_supertonic_model():
+    global supertonic_model
+    if supertonic_model is not None:
+        return supertonic_model
+
+    async with supertonic_model_lock:
+        if supertonic_model is not None:
+            return supertonic_model
+
+        try:
+            print("🔧 Initializing Supertonic TTS model...")
+            supertonic_dir = os.path.join(ASSETS_DIR, "supertonic")
+            supertonic_model = SupertonicTTS(supertonic_dir, auto_download=True)
+            print("🎵 Supertonic model initialized successfully")
+        except Exception as e:
+            print(f"❌ Failed to initialize Supertonic model: {e}")
+            raise
+
+    return supertonic_model
+
+
+def get_supertonic_voice_style(tts: SupertonicTTS, voice_name: str):
+    if voice_name in supertonic_voice_styles:
+        return supertonic_voice_styles[voice_name]
+
+    style = tts.get_voice_style(voice_name=voice_name)
+    supertonic_voice_styles[voice_name] = style
+    return style
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application lifespan events"""
-    global tts_model
     # Startup
     print("🚀 Starting TTS service...")
     setup_signal_handlers()
-
-    try:
-        # Find model files (mounted, local, or download)
-        model, voices = find_model_files()
-
-        # Create ONNX session to select an accelerator (CoreML/CUDA) if available
-        providers = ort.get_available_providers()  # type: ignore[attr-defined]
-        print("Available EPs:", ", ".join(providers))
-
-        # Remove TensorRT provider while debugging errors it causes
-        providers = [provider for provider in providers if provider !=
-                     "TensorrtExecutionProvider"]
-        print("Filtered EPs (TensorRT removed):", ", ".join(providers))
-
-        if "CUDAExecutionProvider" in providers:
-            # Apply CUDA conv algo search performance tweak by modifying the provider in place
-            providers = [provider if provider != "CUDAExecutionProvider"
-                         else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "EXHAUSTIVE"})
-                         for provider in providers]
-
-        print("Using inference engines", providers)
-
-        sess_opts = ort.SessionOptions()  # type: ignore[attr-defined]
-        cpu_count = os.cpu_count()
-        sess_opts.intra_op_num_threads = cpu_count
-        session = ort.InferenceSession(
-            model, session_options=sess_opts, providers=providers)
-
-        # Initialize TTS model
-        tts_model = kokoro_onnx.Kokoro.from_session(session, voices)
-        patch_kokoro_float_inputs(tts_model)
-        print("🎵 TTS model initialized successfully")
-    except Exception as e:
-        print(f"❌ Failed to initialize TTS model: {e}")
-        # Don't raise exception here to allow service to start even if TTS fails
 
     yield
 
@@ -329,7 +379,7 @@ class HealthResponse(BaseModel):
 def create_wav_from_audio(audio_data: np.ndarray, sample_rate: int = 24000) -> bytes:
     """Convert numpy audio array to WAV format bytes"""
     # Ensure audio data is in the right format
-    audio_data = audio_data.astype(np.float32)
+    audio_data = np.squeeze(audio_data).astype(np.float32)
 
     # Convert to 16-bit PCM
     audio_data = (audio_data * 32767).astype(np.int16)
@@ -425,6 +475,23 @@ def parse_voice_name(voice_name: str) -> dict:
         }
 
 
+def parse_supertonic_voice_name(voice_name: str) -> dict:
+    gender = "unknown"
+    if voice_name.startswith("M"):
+        gender = "male"
+    elif voice_name.startswith("F"):
+        gender = "female"
+
+    description = f"English {gender.capitalize()} {
+        voice_name}" if gender != "unknown" else voice_name
+
+    return {
+        "language": "en",
+        "gender": gender,
+        "description": description,
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
@@ -436,18 +503,31 @@ async def health_check():
 
 
 @app.get("/v1/audio/voices", response_model=list[VoiceResponse])
-async def get_voices():
+async def get_voices(model: str = DEFAULT_TTS_MODEL):
     """Get list of available voices"""
-    if tts_model is None:
+    if model not in ALLOWED_MODEL_FAMILIES:
         raise HTTPException(
-            status_code=500, detail="TTS model not initialized")
+            status_code=400,
+            detail=(
+                f"Invalid model '{model}'. "
+                f"Only {', '.join(ALLOWED_MODEL_FAMILIES)} is supported."
+            )
+        )
 
     try:
-        voices = tts_model.get_voices()
+        if model == "kokoro":
+            tts_model = await get_kokoro_model()
+            voices = tts_model.get_voices()
+            parse_voice = parse_voice_name
+        else:
+            await get_supertonic_model()
+            voices = SUPER_TONIC_VOICES
+            parse_voice = parse_supertonic_voice_name
+
         voice_responses = []
 
         for voice_name in voices:
-            voice_info = parse_voice_name(voice_name)
+            voice_info = parse_voice(voice_name)
             voice_responses.append(VoiceResponse(
                 name=voice_name,
                 **voice_info
@@ -461,19 +541,32 @@ async def get_voices():
 
 
 @app.get("/v1/audio/languages", response_model=list[LanguageResponse])
-async def get_languages():
+async def get_languages(model: str = DEFAULT_TTS_MODEL):
     """Get list of supported languages"""
-    if tts_model is None:
+    if model not in ALLOWED_MODEL_FAMILIES:
         raise HTTPException(
-            status_code=500, detail="TTS model not initialized")
+            status_code=400,
+            detail=(
+                f"Invalid model '{model}'. "
+                f"Only {', '.join(ALLOWED_MODEL_FAMILIES)} is supported."
+            )
+        )
 
     try:
         # Get languages from available voices
-        voices = tts_model.get_voices()
+        if model == "kokoro":
+            tts_model = await get_kokoro_model()
+            voices = tts_model.get_voices()
+            parse_voice = parse_voice_name
+        else:
+            await get_supertonic_model()
+            voices = SUPER_TONIC_VOICES
+            parse_voice = parse_supertonic_voice_name
+
         languages = set()
 
         for voice_name in voices:
-            voice_info = parse_voice_name(voice_name)
+            voice_info = parse_voice(voice_name)
             languages.add(voice_info["language"])
 
         lang_responses = []
@@ -536,19 +629,20 @@ async def text_to_speech(request: SpeechRequest):
         )
 
     try:
-        if tts_model is None:
-            raise HTTPException(
-                status_code=500,
-                detail="TTS model not initialized"
-            )
+        if request.model == "kokoro":
+            tts_model = await get_kokoro_model()
+            available_voices = tts_model.get_voices()
+        else:
+            tts_model = await get_supertonic_model()
+            available_voices = SUPER_TONIC_VOICES
 
-        # Check if voice is available
-        available_voices = tts_model.get_voices()
         if request.voice not in available_voices:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid voice '{
-                    request.voice}'. Available voices: {available_voices}"
+                detail=(
+                    f"Invalid voice '{request.voice}'. "
+                    f"Available voices: {available_voices}"
+                )
             )
 
         # Check again before starting generation (in case shutdown was requested)
@@ -558,15 +652,21 @@ async def text_to_speech(request: SpeechRequest):
                 detail="Service is shutting down, not accepting new requests"
             )
 
-        # Generate speech
-        result = tts_model.create(
-            text=request.input,
-            voice=request.voice,
-            speed=request.speed
-        )
-
-        # Extract audio data from tuple (audio_data, sample_rate)
-        audio_data, sample_rate = result
+        if request.model == "kokoro":
+            result = tts_model.create(
+                text=request.input,
+                voice=request.voice,
+                speed=request.speed
+            )
+            audio_data, sample_rate = result
+        else:
+            voice_style = get_supertonic_voice_style(tts_model, request.voice)
+            audio_data, _duration = tts_model.synthesize(
+                request.input,
+                voice_style=voice_style,
+                speed=request.speed
+            )
+            sample_rate = getattr(tts_model, "sample_rate", SAMPLE_RATE)
 
         # Convert to WAV format
         wav_data = create_wav_from_audio(audio_data, sample_rate)
@@ -584,7 +684,9 @@ async def text_to_speech(request: SpeechRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"TTS generation error: {e}")
+        import traceback
+        print(f"TTS generation error: {e}", flush=True)
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate speech: {str(e)}"

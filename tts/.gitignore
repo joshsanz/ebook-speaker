@@ -5,4 +5,5 @@
 *.wav
 .venv/
 __pycache__/
+assets/**/*.json
 

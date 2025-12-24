@@ -32,7 +32,7 @@ services:
     stop_grace_period: 10s
 
   client-build:
-    image: node:20-slim
+    image: node:24-slim
     working_dir: /app
     volumes:
       - ./client:/app
@@ -84,6 +84,10 @@ services:
     networks:
       - ebook-speaker
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
 networks:
   ebook-speaker:
