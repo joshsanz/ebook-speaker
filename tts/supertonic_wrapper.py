@@ -16,8 +16,8 @@ from supertonic import (
 )
 
 
-def download_supertonic_models(assets_dir: str) -> None:
-    """Download Supertonic models from HuggingFace if missing"""
+def download_supertonic_models(assets_dir: str, force_download: bool = False) -> None:
+    """Download Supertonic models from HuggingFace if missing or forced"""
     from huggingface_hub import hf_hub_download
     import sys
 
@@ -40,12 +40,17 @@ def download_supertonic_models(assets_dir: str) -> None:
         # Extract just the filename for the target (remove onnx/ prefix)
         basename = os.path.basename(filepath)
         target_path = os.path.join(assets_dir, basename)
-        if not os.path.exists(target_path):
-            print(f"📥 Downloading {basename} from HuggingFace...", flush=True)
+        if force_download or not os.path.exists(target_path):
+            action = "Re-downloading" if force_download else "Downloading"
+            print(f"📥 {action} {basename} from HuggingFace...", flush=True)
             import sys
             sys.stderr.flush()
             try:
-                downloaded_path = hf_hub_download(repo_id=repo_id, filename=filepath)
+                downloaded_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filepath,
+                    force_download=force_download
+                )
                 shutil.copy(downloaded_path, target_path)
                 print(f"✓ Downloaded {basename}", flush=True)
             except Exception as e:
@@ -61,15 +66,17 @@ def download_supertonic_models(assets_dir: str) -> None:
     for voice_name in ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]:
         filename = f"{voice_name}.json"
         target_path = os.path.join(voice_styles_dir, filename)
-        if not os.path.exists(target_path):
-            print(f"📥 Downloading voice style {filename}...", flush=True)
+        if force_download or not os.path.exists(target_path):
+            action = "Re-downloading" if force_download else "Downloading"
+            print(f"📥 {action} voice style {filename}...", flush=True)
             import sys
             sys.stderr.flush()
             try:
                 # Voice styles are in voice_styles subdirectory in repo
                 downloaded_path = hf_hub_download(
                     repo_id=repo_id,
-                    filename=f"voice_styles/{filename}"
+                    filename=f"voice_styles/{filename}",
+                    force_download=force_download
                 )
                 shutil.copy(downloaded_path, target_path)
                 print(f"✓ Downloaded {filename}", flush=True)
@@ -116,7 +123,25 @@ class SupertonicTTS:
             print(f"❌ Failed to load Supertonic TTS model: {e}", flush=True)
             import sys
             sys.stderr.flush()
-            raise
+            if auto_download:
+                print(
+                    "🔁 Attempting Supertonic model re-download due to load failure...",
+                    flush=True
+                )
+                download_supertonic_models(assets_dir, force_download=True)
+                try:
+                    self.tts = load_text_to_speech(assets_dir, use_gpu=False)
+                    print("✓ Supertonic TTS model loaded after re-download", flush=True)
+                except Exception as retry_error:
+                    print(
+                        f"❌ Supertonic model still failed after re-download: {retry_error}",
+                        flush=True
+                    )
+                    import sys
+                    sys.stderr.flush()
+                    raise
+            else:
+                raise
 
         # Get denoising steps from environment variable
         self.total_steps = int(os.environ.get("TTS_SUPERTONIC_STEPS", "5"))
