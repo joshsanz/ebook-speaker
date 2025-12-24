@@ -34,7 +34,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code and entrypoint
-COPY main.py entrypoint.sh supertonic.py supertonic_wrapper.py ./
+COPY *.py entrypoint.sh ./
 
 # Set proper ownership and permissions
 RUN mkdir -p /app/assets && \
