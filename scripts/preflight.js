@@ -20,7 +20,7 @@ const TTS_DIR = path.join(ROOT_DIR, 'tts');
 const SAMPLE_EPUB = path.join(ROOT_DIR, 'data', 'Excession - Iain M. Banks.epub');
 
 function getDefaultVoice(model) {
-    return model === 'supertonic' ? 'F1' : 'af_heart';
+    return model === 'supertonic' ? 'M1' : 'af_heart';
 }
 
 const defaultTtsModel = process.env.TTS_DEFAULT_MODEL || 'supertonic';

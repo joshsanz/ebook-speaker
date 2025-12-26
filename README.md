@@ -13,6 +13,7 @@ A full-stack web application that reads EPUB ebooks aloud using advanced text-to
 - [API Endpoints](#api-endpoints)
 - [Configuration](#configuration)
 - [Testing](#testing)
+- [Preflight](#preflight)
 - [Project Structure](#project-structure)
 - [Deployment](#deployment)
 - [Docker](#docker)
@@ -181,6 +182,21 @@ cd client
 npm test
 ```
 
+## Preflight
+
+Run the full-stack preflight before committing to confirm the stack is healthy and cleans up after itself:
+
+```bash
+npm run preflight           # interactive; prompts before killing port holders
+npm run preflight -- --kill # non-interactive; auto-kills detected listeners
+```
+
+What it does:
+- Stops compose services for the server and TTS, then waits 10s to free ports 3001/3100/5005 and either prompts or auto-kills listeners.
+- Starts Redis via docker compose, builds the client, and launches the stack on the test ports with Supertonic + M1 defaults.
+- Uploads `data/Excession - Iain M. Banks.epub`, navigates from chapter 5 onward, enqueues TTS queues, and validates cache/queue drain.
+- Cleans up the uploaded book, Redis keys, and any services/processes it started (including containers) on exit.
+
 ## Project Structure
 
 ```
@@ -220,7 +236,7 @@ The easiest way to run the full system is with Docker Compose.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a pull request or open an issue.
+Contributions are welcome! Before opening a PR or pushing commits, run `npm run preflight` (use `-- --kill` for non-interactive runs) to verify the stack and free any busy ports. Please feel free to submit a pull request or open an issue.
 
 ## License
 

@@ -19,6 +19,7 @@
 - `npm run dev:server` / `npm run dev:client` — run either layer alone when isolating regressions.
 - `cd client && npm test` — executes the Jest/Vitest suite.
 - `node test-epub-functionality.js` and `node test-tts-server.js` — quick sanity checks for parser and TTS proxy logic.
+- `npm run preflight [-- --kill]` — full-stack validation that stops compose services, waits 10s for ports to free, prompts (or auto, with `--kill`) to clear port holders, runs upload/queue/TTS checks with the Supertonic M1 defaults, and cleans up Redis + processes.
 
 ## Coding Style & Naming Conventions
 - JavaScript/JSX only; keep imports relative to `client/src` and `shared/`.
@@ -33,5 +34,6 @@
 
 ## Commit & Pull Request Guidelines
 - Follow the observed `type(scope): message` style (`fix(tts): …`, `feat(env): …`). Keep verbs in present tense and scopes narrow.
+- Run `npm run preflight` (optionally `-- --kill` for non-interactive runs) before commits/PRs to ensure the stack is healthy and ports are clear.
 - Squash noisy WIP commits locally; PRs should describe the feature, include reproduction or validation notes, and reference related issues.
 - Attach screenshots or terminal output for UI or CLI-facing changes, and confirm Docker plus local commands still work when touching runtime configuration.
