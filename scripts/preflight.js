@@ -12,19 +12,27 @@ const path = require('path');
 const fs = require('fs');
 const { setTimeout: delay } = require('timers/promises');
 const { createClient } = require('redis');
+const readline = require('readline');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const CLIENT_DIR = path.join(ROOT_DIR, 'client');
 const TTS_DIR = path.join(ROOT_DIR, 'tts');
 const SAMPLE_EPUB = path.join(ROOT_DIR, 'data', 'Excession - Iain M. Banks.epub');
 
+function getDefaultVoice(model) {
+    return model === 'supertonic' ? 'F1' : 'af_heart';
+}
+
+const defaultTtsModel = process.env.TTS_DEFAULT_MODEL || 'supertonic';
+const defaultVoice = process.env.PREFLIGHT_TTS_VOICE || getDefaultVoice(defaultTtsModel);
+
 const CONFIG = {
     redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
-    serverPort: Number(process.env.PREFLIGHT_SERVER_PORT || 3101),
+    serverPort: Number(process.env.PREFLIGHT_SERVER_PORT || 3001),
     clientPort: Number(process.env.PREFLIGHT_CLIENT_PORT || 3100),
     ttsPort: Number(process.env.PREFLIGHT_TTS_PORT || 5005),
-    ttsModel: process.env.TTS_DEFAULT_MODEL || 'supertonic',
-    voice: process.env.PREFLIGHT_TTS_VOICE || 'af_heart',
+    ttsModel: defaultTtsModel,
+    voice: defaultVoice,
     sentence: 'Hello world! This is a preflight TTS connectivity test.',
     queueWaitMs: Number(process.env.PREFLIGHT_QUEUE_WAIT_MS || 5000),
     readinessTimeoutMs: Number(process.env.PREFLIGHT_READY_MS || 20000),
@@ -33,17 +41,21 @@ const CONFIG = {
 
 const processes = [];
 let redisClient;
+let redisStartedByPreflight = false;
 
 function logStep(message) {
     process.stdout.write(`\n==> ${message}\n`);
 }
+
+const AUTO_KILL = process.argv.includes('--kill');
 
 function spawnProcess(command, args, options = {}) {
     const proc = spawn(command, args, {
         stdio: 'inherit',
         env: { ...process.env, ...options.env },
         cwd: options.cwd || ROOT_DIR,
-        shell: false
+        shell: false,
+        detached: true
     });
     processes.push(proc);
     return proc;
@@ -97,7 +109,100 @@ async function waitForHttp(url, { timeoutMs, expectStatus = 200 } = {}) {
 
 async function ensureDockerRedis() {
     logStep('Ensuring Redis is up via docker compose');
+    let wasRunning = false;
+    try {
+        const status = await runCommand('docker', ['compose', 'ps', '-q', 'redis']);
+        wasRunning = Boolean(status.stdout.trim());
+    } catch {
+        // Ignore; we'll attempt to start below
+    }
     await runCommand('docker', ['compose', 'up', '-d', 'redis'], { stdio: 'inherit' });
+    redisStartedByPreflight = !wasRunning;
+}
+
+async function findListeningPids(port) {
+    try {
+        const result = await runCommand('lsof', ['-i', `:${port}`, '-sTCP:LISTEN', '-n', '-P', '-t']);
+        return result.stdout.split('\n').filter(Boolean).map((pid) => Number(pid.trim())).filter(Boolean);
+    } catch (error) {
+        // lsof exits non-zero when nothing is listening; only rethrow if a different error occurs
+        if (error.code !== 1) {
+            console.warn(`Warning: failed to check port ${port} usage: ${error.message}`);
+        }
+        return [];
+    }
+}
+
+async function describePids(pids) {
+    const descriptions = [];
+    for (const pid of pids) {
+        try {
+            const result = await runCommand('ps', ['-p', String(pid), '-o', 'pid=', '-o', 'command=']);
+            const line = result.stdout.split('\n').find(Boolean);
+            if (line) {
+                descriptions.push(line.trim());
+            }
+        } catch {
+            descriptions.push(`${pid} (unable to describe)`);
+        }
+    }
+    return descriptions;
+}
+
+async function promptYesNo(question) {
+    if (AUTO_KILL) {
+        return true;
+    }
+    if (!process.stdin.isTTY) {
+        return false;
+    }
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+    const answer = await new Promise((resolve) => rl.question(`${question} [y/N]: `, resolve));
+    rl.close();
+    return answer.trim().toLowerCase().startsWith('y');
+}
+
+async function ensurePortAvailable(port, label) {
+    const pids = await findListeningPids(port);
+    if (pids.length === 0) {
+        return;
+    }
+
+    const descriptions = await describePids(pids);
+    const list = descriptions.join('\n  ');
+    console.warn(`Port ${port} (${label}) is in use by:\n  ${list}`);
+
+    const shouldKill = await promptYesNo(`Kill process(es) on port ${port}?${AUTO_KILL ? ' (--kill enabled)' : ''}`);
+    if (!shouldKill) {
+        throw new Error(`Port ${port} is busy. Please free it and rerun preflight.`);
+    }
+
+    for (const pid of pids) {
+        try {
+            process.kill(pid, 'SIGTERM');
+        } catch (error) {
+            console.warn(`Failed to kill PID ${pid}: ${error.message}`);
+        }
+    }
+
+    // give processes a moment to exit, then re-check
+    await delay(2000);
+    const remaining = await findListeningPids(port);
+    if (remaining.length) {
+        throw new Error(`Failed to free port ${port}; remaining PIDs: ${remaining.join(', ')}`);
+    }
+}
+
+async function stopComposeServices() {
+    logStep('Stopping docker-compose services that might hold ports (server, tts-service)');
+    try {
+        await runCommand('docker', ['compose', 'stop', 'server', 'tts-service'], { stdio: 'inherit' });
+    } catch (error) {
+        console.warn('Warning: docker compose stop failed (continuing):', error.message);
+    }
 }
 
 async function connectRedis() {
@@ -286,7 +391,7 @@ async function enqueueQueues(bookId, chapterId) {
         body: JSON.stringify({
             bookId,
             chapterId,
-            startIndex: 0,
+            startIndex: -1, // request prefetch from the very first sentence to avoid empty slices
             voice: CONFIG.voice,
             model: CONFIG.ttsModel,
             speed: 1.0
@@ -295,28 +400,39 @@ async function enqueueQueues(bookId, chapterId) {
     if (!prefetchRes.ok) {
         throw new Error(`Prefetch enqueue failed: ${prefetchRes.status}`);
     }
+    const chapterJson = await chapterRes.json();
+    const prefetchJson = await prefetchRes.json();
+    logStep(`Queues enqueued (chapter: ${chapterJson?.queued || 0}, prefetch: ${prefetchJson?.queued || 0})`);
+    return {
+        chapterQueued: chapterJson?.queued || 0,
+        prefetchQueued: prefetchJson?.queued || 0
+    };
 }
 
-async function assertRedisQueues(bookId) {
+async function assertRedisQueues(bookId, queuedCounts = { chapterQueued: 0, prefetchQueued: 0 }) {
     logStep('Validating Redis queues + cache');
     const chapterKey = `queue:tts:chapter:${encodeURIComponent(bookId)}`;
     const prefetchKey = `queue:tts:prefetch:${encodeURIComponent(bookId)}`;
     const bookSet = await redisClient.sMembers('queue:tts:books');
-    if (!bookSet.includes(bookId)) {
-        throw new Error('Book ID not recorded in queue:tts:books');
+    const encodedBookId = encodeURIComponent(bookId);
+    if (!bookSet.includes(bookId) && !bookSet.includes(encodedBookId)) {
+        const presentBooks = bookSet.length ? bookSet.join(', ') : 'none';
+        throw new Error(`Book ID not recorded in queue:tts:books (found: ${presentBooks})`);
     }
     const chapterLen = await redisClient.lLen(chapterKey);
     const prefetchLen = await redisClient.lLen(prefetchKey);
-    if (chapterLen === 0) {
+    const initialChapterLen = Math.max(chapterLen, queuedCounts.chapterQueued || 0);
+    const initialPrefetchLen = Math.max(prefetchLen, queuedCounts.prefetchQueued || 0);
+    if (initialChapterLen === 0) {
         throw new Error('Chapter queue is empty after enqueue');
     }
-    if (prefetchLen === 0) {
+    if (initialPrefetchLen === 0) {
         throw new Error('Prefetch queue is empty after enqueue');
     }
     await delay(CONFIG.queueWaitMs);
     const drainedChapterLen = await redisClient.lLen(chapterKey);
     const drainedPrefetchLen = await redisClient.lLen(prefetchKey);
-    if (drainedChapterLen >= chapterLen && drainedPrefetchLen >= prefetchLen) {
+    if (drainedChapterLen >= initialChapterLen && drainedPrefetchLen >= initialPrefetchLen) {
         throw new Error('Queues did not drain; worker may be stalled');
     }
     const cacheKeys = [];
@@ -342,16 +458,49 @@ async function shutdown() {
     if (redisClient?.isOpen) {
         await redisClient.quit();
     }
+    const killProc = (proc, signal) => {
+        if (proc.killed || !proc.pid) {
+            return;
+        }
+        try {
+            // try process group first
+            process.kill(-proc.pid, signal);
+        } catch {
+            try {
+                process.kill(proc.pid, signal);
+            } catch {
+                // ignore
+            }
+        }
+    };
     for (const proc of processes) {
-        if (!proc.killed) {
-            proc.kill('SIGTERM');
+        killProc(proc, 'SIGTERM');
+    }
+    // give processes a moment to exit, then force kill if needed
+    await delay(1500);
+    for (const proc of processes) {
+        killProc(proc, 'SIGKILL');
+    }
+    if (redisStartedByPreflight) {
+        try {
+            logStep('Stopping docker-compose Redis started by preflight');
+            await runCommand('docker', ['compose', 'stop', 'redis'], { stdio: 'inherit' });
+        } catch (error) {
+            console.warn('Warning: failed to stop Redis container:', error.message);
         }
     }
 }
 
 async function main() {
     const start = Date.now();
+    let exitCode = 1;
     try {
+        await stopComposeServices();
+        logStep('Waiting for ports to free (10s)');
+        await delay(10_000);
+        await ensurePortAvailable(CONFIG.serverPort, 'Express server');
+        await ensurePortAvailable(CONFIG.clientPort, 'Vite client');
+        await ensurePortAvailable(CONFIG.ttsPort, 'TTS service');
         await ensureDockerRedis();
         redisClient = await connectRedis();
         await clearTtsKeys();
@@ -364,12 +513,14 @@ async function main() {
         await testServerTtsProxy();
         const bookId = await uploadSampleBook();
         const chapters = await getChapters(bookId);
-        const chapterId = chapters[0].id || chapters[0].order;
-        await enqueueQueues(bookId, chapterId);
-        await assertRedisQueues(bookId);
+        const preferredChapterIndex = 4; // start at chapter 5 to avoid sparsely populated early sections
+        const selectedChapter = chapters[Math.min(preferredChapterIndex, chapters.length - 1)];
+        const chapterId = selectedChapter.id || selectedChapter.order;
+        const queuedCounts = await enqueueQueues(bookId, chapterId);
+        await assertRedisQueues(bookId, queuedCounts);
         await deleteBook(bookId);
         logStep(`Preflight completed in ${Math.round((Date.now() - start) / 1000)}s`);
-        process.exit(0);
+        exitCode = 0;
     } catch (error) {
         console.error('\n❌ Preflight failed:', error.message);
         if (error.stdout) {
@@ -378,9 +529,10 @@ async function main() {
         if (error.stderr) {
             console.error(error.stderr);
         }
-        process.exitCode = 1;
+        exitCode = 1;
     } finally {
         await shutdown();
+        process.exit(exitCode);
     }
 }
 

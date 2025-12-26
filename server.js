@@ -120,7 +120,7 @@ function createSentenceHash(sentence) {
 function getTtsCacheKey({ bookId, model, voice, speed, sentence }) {
     const normalizedSentence = (sentence || '').trim();
     const sentenceHash = createSentenceHash(normalizedSentence);
-    const normalizedModel = model || 'kokoro';
+    const normalizedModel = model || 'supertonic';
     const normalizedVoice = voice || 'default';
     const normalizedSpeed = typeof speed === 'number' ? speed.toFixed(2) : String(speed || '1.00');
     return `${TTS_CACHE_KEY_PREFIX}${encodeBookId(bookId)}:${normalizedModel}:${normalizedVoice}:${normalizedSpeed}:${sentenceHash}`;
@@ -246,7 +246,7 @@ async function processQueueItem(job) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: job.model || 'kokoro',
+                model: job.model || 'supertonic',
                 input: job.sentence,
                 voice: job.voice,
                 response_format: 'wav',
@@ -923,7 +923,7 @@ app.post('/api/tts/queue/chapter', async (req, res) => {
         const nextChapter = chapters[currentIndex + 1] || null;
         const basePayload = {
             bookId,
-            model: model || 'kokoro',
+            model: model || 'supertonic',
             voice,
             speed: speed || 1.0
         };
@@ -992,7 +992,7 @@ app.post('/api/tts/queue/prefetch', async (req, res) => {
 
         const basePayload = {
             bookId,
-            model: model || 'kokoro',
+            model: model || 'supertonic',
             voice,
             speed: speed || 1.0
         };
@@ -1056,7 +1056,7 @@ app.post('/api/tts/speech', async (req, res) => {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: model || 'kokoro',
+                model: model || 'supertonic',
                 input,
                 voice,
                 response_format: response_format || 'wav',

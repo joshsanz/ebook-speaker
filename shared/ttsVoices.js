@@ -126,7 +126,7 @@ export const getVoiceByName = (voiceName, model) => {
  */
 export const getDefaultVoice = (model) => {
   if (model === 'supertonic') {
-    return 'F1';
+    return 'M1';
   }
   return 'af_heart'; // Default to Kokoro American Female Heart
 };

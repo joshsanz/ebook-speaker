@@ -20,9 +20,9 @@ export const TTS_CONFIG = {
   AUDIO_READY_STATE: 2,
   
   // Default TTS settings
-  DEFAULT_VOICE: 'mia',
+  DEFAULT_VOICE: 'M1',
   DEFAULT_SPEED: 1.0,
-  DEFAULT_MODEL: 'kokoro',
+  DEFAULT_MODEL: 'supertonic',
   DEFAULT_FORMAT: 'wav'
 };
 
