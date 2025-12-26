@@ -429,11 +429,36 @@ async function assertRedisQueues(bookId, queuedCounts = { chapterQueued: 0, pref
     if (initialPrefetchLen === 0) {
         throw new Error('Prefetch queue is empty after enqueue');
     }
-    await delay(CONFIG.queueWaitMs);
-    const drainedChapterLen = await redisClient.lLen(chapterKey);
-    const drainedPrefetchLen = await redisClient.lLen(prefetchKey);
-    if (drainedChapterLen >= initialChapterLen && drainedPrefetchLen >= initialPrefetchLen) {
-        throw new Error('Queues did not drain; worker may be stalled');
+    const timeoutMs = 5 * 60 * 1000;
+    const start = Date.now();
+    let prefetchCleared = initialPrefetchLen === 0;
+    while (true) {
+        const [currentChapterLen, currentPrefetchLen] = await Promise.all([
+            redisClient.lLen(chapterKey),
+            redisClient.lLen(prefetchKey)
+        ]);
+        process.stdout.write(`Queue lengths - prefetch: ${currentPrefetchLen}, chapter: ${currentChapterLen}\n`);
+        if (!prefetchCleared) {
+            if (currentChapterLen < initialChapterLen && currentPrefetchLen > 0) {
+                throw new Error(`Chapter queue started draining before prefetch finished (prefetch=${currentPrefetchLen}, chapter=${currentChapterLen})`);
+            }
+            if (currentPrefetchLen === 0) {
+                prefetchCleared = true;
+                logStep('Prefetch queue drained; monitoring chapter queue');
+            }
+        } else {
+            if (currentPrefetchLen > 0) {
+                throw new Error('Prefetch queue repopulated after draining');
+            }
+            if (currentChapterLen < initialChapterLen) {
+                logStep('Chapter queue began draining after prefetch completed');
+                break;
+            }
+        }
+        if (Date.now() - start > timeoutMs) {
+            throw new Error(`Queue drain timed out after 300s (prefetch=${currentPrefetchLen}, chapter=${currentChapterLen})`);
+        }
+        await delay(1000);
     }
     const cacheKeys = [];
     for await (const key of redisClient.scanIterator({ MATCH: 'tts:*', COUNT: 50 })) {
