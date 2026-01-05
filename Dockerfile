@@ -4,6 +4,13 @@ FROM node:24-slim AS builder
 # Set working directory
 WORKDIR /app
 
+# Install build dependencies for native modules (sqlite3)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy package files for backend
 COPY package*.json ./
 

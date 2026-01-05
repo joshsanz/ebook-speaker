@@ -2,7 +2,7 @@ Security Plan
 
 Overview
 - Goal: add production-ready security with local auth, HTTPS via Tailscale Funnel, hardened defaults, and observability through Grafana.
-- Decisions locked in: local auth + SQLite user store; sessions via secure cookies; Prometheus + Loki stack added and wired to Grafana.
+- Decisions locked in: local auth + SQLite user store; sessions via secure cookies; Prometheus + Loki stack planned and wired to Grafana.
 
 Plan (detailed, ordered)
 - Step 1: Auth requirements and storage choice (completed)
@@ -14,7 +14,7 @@ Plan (detailed, ordered)
   - Code refs: `server.js` (auth middleware), `utils/` (password hashing + validation), `data/` (SQLite DB), `docker-compose*.yml` (if switching to Postgres later).
   - Outcome: local auth + SQLite chosen, Redis used for session store.
 
-- Step 2: Auth backend (server-side)
+- Step 2: Auth backend (server-side) (completed)
   - What/why: add secure login/logout endpoints, session handling, and per-request auth gating.
   - Implementation:
     - Add dependencies: `express-session`, `connect-redis`, `bcryptjs` (or `argon2`), plus a small user data layer.
@@ -27,6 +27,11 @@ Plan (detailed, ordered)
     - `utils/` (password policy + hashing helpers)
     - `shared/` stays untouched
     - `tests/` (add server auth tests)
+  - Progress notes:
+    - SQLite auth store added at `data/auth.sqlite` (`AUTH_DB_PATH` override).
+    - Admin user seeding on startup via `ADMIN_EMAIL` + `ADMIN_PASSWORD`.
+    - Sessions stored in Redis with `SESSION_SECRET`, `SESSION_MAX_AGE_MS`, `SESSION_COOKIE_NAME`.
+    - Docker builder installs native build tools for `sqlite3`.
   - Design choice rationale: sessions are simpler and safer for browser apps; Redis is already present.
 
 - Step 3: Auth UI and client session handling

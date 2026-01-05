@@ -17,6 +17,8 @@ const fs = require('fs');
 const fsPromises = require('fs').promises;
 const crypto = require('crypto');
 const cors = require('cors');
+const session = require('express-session');
+const RedisStore = require('connect-redis').default;
 const { processForTTSAndHighlighting, splitIntoPronounceable } = require('./shared/textProcessing.js');
 const multer = require('multer');
 const fileUpload = require('express-fileupload');
@@ -25,6 +27,14 @@ const { ipKeyGenerator } = require('express-rate-limit');
 const log = require('loglevel');
 const EpubReader = require('./epub-reader');
 const { createClient } = require('redis');
+const { createAuthStore } = require('./utils/authStore');
+const {
+    normalizeEmail,
+    validateEmail,
+    validatePassword,
+    hashPassword,
+    verifyPassword
+} = require('./utils/auth');
 const { validateFilename, createSecurePath, validateFileAccess } = require('./utils/security');
 const { sanitizeEpubHtml, analyzeHtmlSecurity } = require('./utils/htmlSanitizer');
 const { 
@@ -47,15 +57,60 @@ const TTS_LOCK_TTL_SECONDS = Number.parseInt(process.env.TTS_LOCK_TTL_SECONDS ||
 const TTS_PREFETCH_COUNT = Number.parseInt(process.env.TTS_PREFETCH_COUNT || '15', 10);
 const DATA_DIR = path.join(__dirname, 'data');
 const CLIENT_BUILD_DIR = path.join(__dirname, 'client/build');
+const AUTH_DB_PATH = process.env.AUTH_DB_PATH || path.join(DATA_DIR, 'auth.sqlite');
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'ebook_speaker.sid';
+const SESSION_MAX_AGE_MS = Number.parseInt(process.env.SESSION_MAX_AGE_MS || String(8 * 60 * 60 * 1000), 10);
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_ROLE = process.env.ADMIN_ROLE || 'admin';
 
 // Set default log level to INFO to reduce noise, can be changed via log.setLevel()
 log.setLevel('INFO');
 
+let sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret && process.env.NODE_ENV !== 'production') {
+    sessionSecret = crypto.randomBytes(32).toString('hex');
+    log.warn('SESSION_SECRET not set; using a random secret for this run');
+}
+
+if (!sessionSecret) {
+    log.error('SESSION_SECRET must be set in production');
+    process.exit(1);
+}
+
+const SESSION_SECRET = sessionSecret;
+
 const app = express();
 
-// Enable CORS for React development
-app.use(cors());
+if (TRUST_PROXY) {
+    app.set('trust proxy', 1);
+}
+
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.length === 0) {
+            callback(null, true);
+            return;
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+
+        callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(express.json());
+
+const authStore = createAuthStore({ dbPath: AUTH_DB_PATH, log });
 
 // Serve static files from React build only in production
 if (process.env.NODE_ENV === 'production') {
@@ -99,6 +154,35 @@ redisClient.on('ready', () => {
 redisClient.connect().catch((error) => {
     redisReady = false;
     log.error('Failed to connect to Redis:', error);
+});
+
+const sessionStore = new RedisStore({
+    client: redisClient,
+    prefix: 'session:'
+});
+
+app.use(session({
+    name: SESSION_COOKIE_NAME,
+    store: sessionStore,
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    proxy: TRUST_PROXY,
+    cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: SESSION_MAX_AGE_MS
+    }
+}));
+
+app.use((req, res, next) => {
+    if (req.session && req.session.user) {
+        req.user = req.session.user;
+    }
+
+    next();
 });
 
 function encodeBookId(bookId) {
@@ -177,6 +261,82 @@ async function releaseLock(lockKey, token) {
         });
     } catch (error) {
         log.warn('Failed to release Redis lock:', error);
+    }
+}
+
+function getSessionUser(user) {
+    return {
+        id: user.id,
+        email: user.email,
+        role: user.role
+    };
+}
+
+function regenerateSession(req) {
+    return new Promise((resolve, reject) => {
+        req.session.regenerate((error) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+function destroySession(req) {
+    return new Promise((resolve, reject) => {
+        req.session.destroy((error) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+async function seedAdminUser() {
+    if (!ADMIN_EMAIL && !ADMIN_PASSWORD) {
+        log.warn('Admin user seed skipped: ADMIN_EMAIL and ADMIN_PASSWORD not set');
+        return;
+    }
+
+    if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+        log.error('Admin user seed failed: ADMIN_EMAIL and ADMIN_PASSWORD must both be set');
+        return;
+    }
+
+    const normalizedEmail = normalizeEmail(ADMIN_EMAIL);
+    if (!validateEmail(normalizedEmail)) {
+        log.error('Admin user seed failed: ADMIN_EMAIL is not a valid email address');
+        return;
+    }
+
+    const passwordCheck = validatePassword(ADMIN_PASSWORD);
+    if (!passwordCheck.isValid) {
+        log.error('Admin user seed failed: ADMIN_PASSWORD does not meet requirements');
+        passwordCheck.issues.forEach((issue) => log.error(`Password issue: ${issue}`));
+        return;
+    }
+
+    try {
+        const passwordHash = await hashPassword(ADMIN_PASSWORD);
+        const result = await authStore.ensureUser({
+            email: normalizedEmail,
+            passwordHash,
+            role: ADMIN_ROLE
+        });
+
+        if (result.created) {
+            log.info(`Seeded admin user: ${normalizedEmail}`);
+        } else {
+            log.info(`Admin user already exists: ${normalizedEmail}`);
+        }
+    } catch (error) {
+        log.error('Failed to seed admin user:', error);
     }
 }
 
@@ -437,6 +597,22 @@ const uploadRateLimit = rateLimit({
     skipFailedRequests: false
 });
 
+const loginRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: {
+        error: 'Too many login attempts. Please try again later.',
+        retryAfter: '15 minutes'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        return ipKeyGenerator(req) + ':' + (req.get('User-Agent') || '').substring(0, 50);
+    },
+    skipSuccessfulRequests: true,
+    skipFailedRequests: false
+});
+
 // File upload middleware configuration
 const fileUploadConfig = {
     limits: {
@@ -462,6 +638,76 @@ const epubReaders = new Map();
 // =============================================================================
 // MIDDLEWARE SETUP
 // =============================================================================
+
+function requireAuth(req, res, next) {
+    if (!req.session || !req.session.user) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+    }
+
+    next();
+}
+
+app.post('/api/auth/login', loginRateLimit, async (req, res) => {
+    const { email, password } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+
+    if (!validateEmail(normalizedEmail) || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Invalid email or password' });
+    }
+
+    try {
+        const user = await authStore.getUserByEmail(normalizedEmail);
+        if (!user || !user.is_active) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+
+        const passwordMatches = await verifyPassword(password, user.password_hash);
+        if (!passwordMatches) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+
+        await regenerateSession(req);
+        req.session.user = getSessionUser(user);
+        await authStore.updateLastLogin(user.id);
+
+        return res.json({ user: req.session.user });
+    } catch (error) {
+        log.error('Login failed:', error);
+        return res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+    try {
+        if (req.session) {
+            await destroySession(req);
+        }
+
+        res.clearCookie(SESSION_COOKIE_NAME);
+        return res.json({ ok: true });
+    } catch (error) {
+        log.error('Logout failed:', error);
+        return res.status(500).json({ error: 'Logout failed' });
+    }
+});
+
+app.get('/api/auth/me', (req, res) => {
+    if (!req.session || !req.session.user) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    return res.json({ user: req.session.user });
+});
+
+app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/auth')) {
+        next();
+        return;
+    }
+
+    requireAuth(req, res, next);
+});
 
 
 /**
@@ -525,7 +771,7 @@ app.post('/api/books', uploadRateLimit, fileUpload(fileUploadConfig), async (req
         // SECURITY: Comprehensive file validation
         const validation = await validateFileUpload(fileBuffer, uploadedFile.name, {
             dataDir: DATA_DIR,
-            userId: 'anonymous', // TODO: Use actual user ID when auth is implemented
+            userId: req.user ? String(req.user.id) : 'anonymous',
             strictMode: process.env.NODE_ENV === 'production'
         });
 
@@ -1167,32 +1413,43 @@ app.get('*', (req, res) => {
 /**
  * Start the Express server
  */
-app.listen(PORT, () => {
-    log.info(`🚀 EPUB Speaker server running on http://localhost:${PORT}`);
-    
-    if (process.env.NODE_ENV === 'production') {
-        log.info(`📦 Production mode: Full-stack app available at http://localhost:${PORT}`);
-    } else {
-        log.info(`🔧 Development mode: API server only`);
-        log.info(`🌐 For frontend, use: http://localhost:3000 (Vite dev server)`);
-        log.info(`🚫 Port ${PORT} serves API only - frontend requests will redirect to port 3000`);
-    }
-    
-    log.info(`TTS Service URL: ${TTS_SERVICE_URL}`);
-    log.info(`TTS Cache enabled with Redis TTL ${TTS_CACHE_TTL_SECONDS}s`);
-    log.info('Available EPUB files in data directory:');
-    
-    try {
-        const files = fs.readdirSync(DATA_DIR);
-        const epubFiles = files.filter(file => file.toLowerCase().endsWith('.epub'));
-        if (epubFiles.length === 0) {
-            log.info('  - No EPUB files found');
+async function startServer() {
+    await fsPromises.mkdir(DATA_DIR, { recursive: true });
+    await authStore.init();
+    await seedAdminUser();
+
+    app.listen(PORT, () => {
+        log.info(`🚀 EPUB Speaker server running on http://localhost:${PORT}`);
+        
+        if (process.env.NODE_ENV === 'production') {
+            log.info(`📦 Production mode: Full-stack app available at http://localhost:${PORT}`);
         } else {
-            epubFiles.forEach(file => log.info(`  - ${file}`));
+            log.info(`🔧 Development mode: API server only`);
+            log.info(`🌐 For frontend, use: http://localhost:3000 (Vite dev server)`);
+            log.info(`🚫 Port ${PORT} serves API only - frontend requests will redirect to port 3000`);
         }
-    } catch (error) {
-        log.error('Error reading data directory:', error);
-    }
+        
+        log.info(`TTS Service URL: ${TTS_SERVICE_URL}`);
+        log.info(`TTS Cache enabled with Redis TTL ${TTS_CACHE_TTL_SECONDS}s`);
+        log.info('Available EPUB files in data directory:');
+        
+        try {
+            const files = fs.readdirSync(DATA_DIR);
+            const epubFiles = files.filter(file => file.toLowerCase().endsWith('.epub'));
+            if (epubFiles.length === 0) {
+                log.info('  - No EPUB files found');
+            } else {
+                epubFiles.forEach(file => log.info(`  - ${file}`));
+            }
+        } catch (error) {
+            log.error('Error reading data directory:', error);
+        }
+    });
+}
+
+startServer().catch((error) => {
+    log.error('Failed to start server:', error);
+    process.exit(1);
 });
 
 module.exports = app;
